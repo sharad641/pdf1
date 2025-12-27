@@ -3,7 +3,6 @@ import { WatermarkConfig } from '../types';
 
 const DEFAULT_WATERMARK_TEXT = 'vtunotesforall';
 const STRICT_WATERMARK_COLOR = rgb(0.5, 0.5, 0.5); 
-const STRICT_WATERMARK_OPACITY = 0.2; 
 const WATERMARK_ANGLE = 60; 
 
 // Standard configuration for Merge Mode (Strict Rules per requirements)

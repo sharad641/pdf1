@@ -3,7 +3,7 @@ import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig } from './types';
 import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles } from './services/pdfService';
-import { FileDown, RefreshCw, CheckCircle, AlertTriangle, ArrowRight, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, Eye, X, Palette, Image as ImageIcon, Sliders, Upload, FileStack, ChevronRight, Settings2, Sparkles, FileText } from 'lucide-react';
+import { FileDown, RefreshCw, CheckCircle, AlertTriangle, ArrowRight, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, FileStack, ChevronRight, Settings2, Sparkles, FileText } from 'lucide-react';
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('MERGE');
@@ -140,7 +140,8 @@ const App: React.FC = () => {
         const allBytes = processedFiles.map(f => f.processedData);
         // Reuse status for basic feedback, although immediate usually
         const mergedBytes = await mergeProcessedFiles(allBytes);
-        const blob = new Blob([mergedBytes], { type: 'application/pdf' });
+        // Cast to any to avoid TS2322 strict ArrayBufferLike mismatch
+        const blob = new Blob([mergedBytes as any], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
         
         const link = document.createElement('a');
@@ -178,7 +179,8 @@ const App: React.FC = () => {
           (p) => setProcessingState(prev => ({ ...prev, progress: p, message: "Processing pages & merging..." }))
         );
 
-        const blob = new Blob([mergedBytes], { type: 'application/pdf' });
+        // Cast to any to avoid TS2322 strict ArrayBufferLike mismatch
+        const blob = new Blob([mergedBytes as any], { type: 'application/pdf' });
         setMergedPdfUrl(URL.createObjectURL(blob));
 
       } else {
@@ -198,7 +200,8 @@ const App: React.FC = () => {
 
           const f = contentFiles[i];
           const bytes = await processBatchFile(f.file, currentCover, wmConfig);
-          const blob = new Blob([bytes], { type: 'application/pdf' });
+          // Cast to any to avoid TS2322 strict ArrayBufferLike mismatch
+          const blob = new Blob([bytes as any], { type: 'application/pdf' });
           
           results.push({
             id: f.id,

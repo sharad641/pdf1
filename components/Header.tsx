@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Layers, Sparkles } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 
 const Header: React.FC = () => {
   return (

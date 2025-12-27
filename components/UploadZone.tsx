@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileType, Trash2, AlertCircle, CheckCircle2, FileText } from 'lucide-react';
+import { UploadCloud, Trash2, CheckCircle2, FileText } from 'lucide-react';
 import { FileWithId } from '../types';
 
 interface UploadZoneProps {
@@ -51,7 +51,7 @@ const UploadZone: React.FC<UploadZoneProps> = ({
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const validFiles = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
+      const validFiles = Array.from(e.dataTransfer.files).filter((f: File) => f.type === 'application/pdf');
       if (validFiles.length > 0) {
         if (!multiple) {
             onFilesSelected([validFiles[0]]);
