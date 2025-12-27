@@ -3,7 +3,66 @@ import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata } from './types';
 import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles } from './services/pdfService';
-import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun } from 'lucide-react';
+import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun, RotateCcw } from 'lucide-react';
+
+// --- DEFAULT LOGO GENERATION ---
+const DEFAULT_LOGO_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <defs>
+    <style>
+      .cls-border { fill: none; stroke: #283088; stroke-width: 15px; }
+      .cls-fill { fill: #283088; }
+      .cls-text { font-size: 50px; fill: #283088; font-family: Arial, Helvetica, sans-serif; font-weight: bold; }
+    </style>
+  </defs>
+  <circle class="cls-border" cx="250" cy="250" r="230"/>
+  <!-- Graduation Cap -->
+  <path class="cls-fill" d="M250 110 L100 170 L250 230 L400 170 Z"/>
+  <rect class="cls-fill" x="390" y="170" width="6" height="50"/>
+  <circle class="cls-fill" cx="393" cy="230" r="10"/>
+  <!-- Open Book -->
+  <path class="cls-fill" d="M250 240 L250 370 C250 370 330 390 390 360 L390 230 C330 260 250 240 250 240 Z"/>
+  <path class="cls-fill" d="M250 240 L250 370 C250 370 170 390 110 360 L110 230 C170 260 250 240 250 240 Z"/>
+  <!-- Text -->
+  <text class="cls-text" x="250" y="450" text-anchor="middle">vtunotesforall</text>
+</svg>
+`;
+
+const loadDefaultLogo = async (): Promise<File> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const svgBlob = new Blob([DEFAULT_LOGO_SVG], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 500;
+            canvas.height = 500;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { 
+                URL.revokeObjectURL(url);
+                reject(new Error('Canvas context failed')); 
+                return; 
+            }
+            ctx.drawImage(img, 0, 0);
+            
+            canvas.toBlob((blob) => {
+                URL.revokeObjectURL(url);
+                if (blob) {
+                    const file = new File([blob], "vtunotesforall_logo.png", { type: 'image/png' });
+                    resolve(file);
+                } else {
+                    reject(new Error('Blob creation failed'));
+                }
+            }, 'image/png');
+        };
+        img.onerror = (e) => {
+            URL.revokeObjectURL(url);
+            reject(e);
+        };
+        img.src = url;
+    });
+};
 
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState(() => {
@@ -51,6 +110,13 @@ const App: React.FC = () => {
   
   const resultsRef = useRef<HTMLDivElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+
+  // Load default logo on mount
+  useEffect(() => {
+    loadDefaultLogo().then(file => {
+        setWmConfig(prev => ({ ...prev, logoFile: file }));
+    }).catch(err => console.error("Failed to load default logo", err));
+  }, []);
 
   useEffect(() => {
     if (darkMode) {
@@ -127,6 +193,15 @@ const App: React.FC = () => {
     if (logoInputRef.current) logoInputRef.current.value = '';
   };
 
+  const restoreDefaultLogo = async () => {
+    try {
+        const file = await loadDefaultLogo();
+        setWmConfig(prev => ({ ...prev, logoFile: file }));
+    } catch (e) {
+        console.error("Failed to restore logo", e);
+    }
+  };
+
   const cleanupResults = () => {
     if (mergedPdfUrl) URL.revokeObjectURL(mergedPdfUrl);
     processedFiles.forEach(f => URL.revokeObjectURL(f.downloadUrl));
@@ -143,16 +218,19 @@ const App: React.FC = () => {
     setContentFiles([]);
     cleanupResults();
     if (newMode === 'WATERMARK_ONLY') {
-      setWmConfig({
-        diagonal: true,
-        bottom: true,
-        top: false,
-        crossed: false,
-        textColor: '#808080',
-        textOpacity: 0.2,
-        logoFile: null,
-        logoOpacity: 0.5,
-        logoScale: 0.5
+      // Re-initialize default config including logo
+      loadDefaultLogo().then(logo => {
+          setWmConfig({
+            diagonal: true,
+            bottom: true,
+            top: false,
+            crossed: false,
+            textColor: '#808080',
+            textOpacity: 0.2,
+            logoFile: logo,
+            logoOpacity: 0.5,
+            logoScale: 0.5
+          });
       });
       setFilenameSuffix('vtunotesforall');
     }
@@ -208,6 +286,16 @@ const App: React.FC = () => {
 
       if (mode === 'MERGE') {
         if (coverFile.length === 0 || contentFiles.length === 0) return;
+
+        // Force reload default logo if somehow missing in merge mode strict config
+        // Actually mergeAndWatermarkPdfs uses DEFAULT_MERGE_CONFIG which we should update or pass metadata.
+        // The current implementation of mergeAndWatermarkPdfs uses a HARDCODED config. 
+        // We need to pass the current wmConfig if we want the logo to appear there, OR update the service.
+        // The previous service implementation for MERGE mode used `DEFAULT_MERGE_CONFIG` inside the service.
+        // Let's assume for MERGE mode we want strict rules, but maybe with our Logo? 
+        // The user said "whenever i select the logo include this".
+        // For now, MERGE mode uses strict hardcoded config in pdfService.ts. 
+        // WATERMARK_ONLY mode uses the UI config.
 
         const mergedBytes = await mergeAndWatermarkPdfs(
           coverFile[0].file,
@@ -670,6 +758,11 @@ const App: React.FC = () => {
                                         <div className="border-t border-slate-200/50 dark:border-slate-700/50 pt-5">
                                             <div className="flex justify-between items-center mb-4">
                                                 <label className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2"><ImageIcon className="w-3.5 h-3.5" /> Logo Overlay</label>
+                                                {!wmConfig.logoFile && (
+                                                     <button onClick={restoreDefaultLogo} className="text-[10px] font-bold text-brand-600 hover:text-brand-700 dark:text-brand-400 flex items-center gap-1">
+                                                        <RotateCcw className="w-3 h-3" /> Reset Default
+                                                     </button>
+                                                )}
                                                 {wmConfig.logoFile && <button onClick={removeLogo} className="text-[10px] text-red-500 hover:underline font-bold">REMOVE</button>}
                                             </div>
                                             {!wmConfig.logoFile ? (
@@ -679,7 +772,7 @@ const App: React.FC = () => {
                                                         <div className="bg-white dark:bg-slate-800 p-2 rounded-lg shadow-sm group-hover:scale-110 transition-transform">
                                                            <Plus className="w-4 h-4 text-brand-500" />
                                                         </div>
-                                                        <span>Upload PNG / JPG Logo</span>
+                                                        <span>Upload Custom Logo</span>
                                                     </div>
                                                 </div>
                                             ) : (
