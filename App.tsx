@@ -3,7 +3,7 @@ import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata } from './types';
 import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles } from './services/pdfService';
-import { FileDown, RefreshCw, CheckCircle, AlertTriangle, ArrowRight, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Upload, Plus, Maximize, Sun } from 'lucide-react';
+import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun } from 'lucide-react';
 
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState(() => {

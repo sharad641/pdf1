@@ -122,7 +122,7 @@ const UploadZone: React.FC<UploadZoneProps> = ({
           
           <div className="relative z-10 space-y-1.5 md:space-y-2">
             <p className="text-sm md:text-base font-bold text-slate-700 dark:text-slate-200 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
-              {label}
+              {label} {required && <span className="text-red-500" title="Required">*</span>}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[200px] md:max-w-[240px] mx-auto leading-relaxed">
               {isDragging ? "Release to drop files" : subLabel}

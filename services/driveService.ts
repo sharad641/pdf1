@@ -4,7 +4,7 @@ export const uploadToDrive = async (accessToken: string, fileBytes: Uint8Array, 
     mimeType: 'application/pdf',
   };
 
-  const blob = new Blob([fileBytes], { type: 'application/pdf' });
+  const blob = new Blob([fileBytes as any], { type: 'application/pdf' });
   const formData = new FormData();
   formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
   formData.append('file', blob);
