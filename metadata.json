@@ -1,0 +1,5 @@
+{
+  "name": "VTU Notes Merging System",
+  "description": "A specialized tool for VTU Notes For All to merge cover pages and content PDFs with automatic watermarking.",
+  "requestFramePermissions": []
+}
