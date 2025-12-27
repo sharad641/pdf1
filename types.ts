@@ -26,6 +26,12 @@ export interface ProcessingState {
 
 export type AppMode = 'MERGE' | 'WATERMARK_ONLY';
 
+export interface PdfMetadata {
+  title: string;
+  author: string;
+  subject?: string;
+}
+
 export interface WatermarkConfig {
   // Positions
   diagonal: boolean;

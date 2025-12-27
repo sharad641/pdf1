@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, Trash2, CheckCircle2, FileText } from 'lucide-react';
+import { UploadCloud, Trash2, FileText, Upload, ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import { FileWithId } from '../types';
 
 interface UploadZoneProps {
@@ -11,6 +11,8 @@ interface UploadZoneProps {
   files: FileWithId[];
   onFilesSelected: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
+  onMoveUp?: (index: number) => void;
+  onMoveDown?: (index: number) => void;
   required?: boolean;
 }
 
@@ -23,6 +25,8 @@ const UploadZone: React.FC<UploadZoneProps> = ({
   files,
   onFilesSelected,
   onRemoveFile,
+  onMoveUp,
+  onMoveDown,
   required = false
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -68,29 +72,17 @@ const UploadZone: React.FC<UploadZoneProps> = ({
 
   const hasFiles = files.length > 0;
 
-  return (
-    <div className="w-full">
-      <div className="mb-3 flex items-center justify-between">
-        <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-          {label} 
-          {required && !hasFiles && (
-            <span className="flex items-center text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
-              Required
-            </span>
-          )}
-          {hasFiles && (
-             <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-               <CheckCircle2 className="w-3 h-3" /> Ready
-             </span>
-          )}
-        </label>
-        {hasFiles && (
-          <span className="text-xs font-medium text-slate-500">
-            {files.length} {files.length === 1 ? 'file' : 'files'} selected
-          </span>
-        )}
-      </div>
+  // Format bytes to human readable string
+  const formatSize = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
 
+  return (
+    <div className="w-full transition-all">
       {!hasFiles || multiple ? (
         <div 
           onClick={handleCardClick}
@@ -99,14 +91,12 @@ const UploadZone: React.FC<UploadZoneProps> = ({
           onDrop={handleDrop}
           className={`
             group relative overflow-hidden
-            border-2 border-dashed rounded-2xl p-8 
+            border-2 border-dashed rounded-2xl p-6 md:p-8 
             flex flex-col items-center justify-center text-center cursor-pointer 
-            transition-all duration-300 ease-out
+            transition-all duration-300 ease-out active:scale-98
             ${isDragging 
-              ? 'border-brand-500 bg-brand-50/50 scale-[1.01] shadow-lg ring-4 ring-brand-100' 
-              : hasFiles 
-                ? 'border-brand-200 bg-slate-50 hover:bg-white hover:border-brand-400 hover:shadow-md' 
-                : 'border-slate-300 bg-white hover:border-brand-400 hover:bg-slate-50 hover:shadow-md'
+              ? 'border-brand-500 bg-brand-50/50 dark:bg-brand-900/10 scale-[1.02] shadow-xl shadow-brand-500/10' 
+              : 'border-slate-300 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/30 hover:border-brand-400 dark:hover:border-brand-500 hover:bg-white dark:hover:bg-slate-800'
             }
           `}
         >
@@ -121,54 +111,97 @@ const UploadZone: React.FC<UploadZoneProps> = ({
           />
           
           <div className={`
-            relative z-10 p-4 rounded-full mb-4 transition-all duration-300
-            ${isDragging ? 'bg-brand-100 text-brand-600 scale-110' : 'bg-slate-100 text-slate-400 group-hover:bg-brand-50 group-hover:text-brand-500 group-hover:scale-110'}
+            relative z-10 w-14 h-14 md:w-16 md:h-16 rounded-2xl flex items-center justify-center mb-3 md:mb-4 transition-all duration-300 shadow-sm
+            ${isDragging 
+               ? 'bg-brand-500 text-white rotate-6 scale-110 shadow-brand-500/30' 
+               : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-400 dark:text-slate-400 group-hover:text-brand-500 group-hover:border-brand-200 dark:group-hover:border-brand-700 group-hover:scale-110'
+            }
           `}>
-            <UploadCloud className={`w-8 h-8 ${isDragging ? 'animate-bounce' : ''}`} />
+            {isDragging ? <UploadCloud className="w-7 h-7 md:w-8 md:h-8 animate-bounce" /> : <Upload className="w-6 h-6 md:w-7 md:h-7" />}
           </div>
           
-          <div className="relative z-10 space-y-1">
-            <p className="text-base font-semibold text-slate-700 group-hover:text-brand-700 transition-colors">
-              {isDragging ? "Drop to upload" : "Click to upload or drag & drop"}
+          <div className="relative z-10 space-y-1.5 md:space-y-2">
+            <p className="text-sm md:text-base font-bold text-slate-700 dark:text-slate-200 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
+              {label}
             </p>
-            <p className="text-xs text-slate-400 group-hover:text-slate-500 transition-colors">{subLabel}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[200px] md:max-w-[240px] mx-auto leading-relaxed">
+              {isDragging ? "Release to drop files" : subLabel}
+            </p>
           </div>
-
-          {/* Background Pattern */}
-          <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(#0ea5e9_1px,transparent_1px)] [background-size:16px_16px]"></div>
         </div>
       ) : null}
 
       {/* File List */}
       {hasFiles && (
-        <div className={`mt-4 space-y-3 ${multiple ? 'max-h-80 overflow-y-auto pr-2 custom-scrollbar' : ''}`}>
+        <div className={`mt-4 md:mt-5 space-y-2 md:space-y-3 ${multiple ? 'max-h-[300px] md:max-h-[320px] overflow-y-auto pr-1 custom-scrollbar' : ''}`}>
+           {/* Header for list if multiple */}
+           {multiple && (
+               <div className="flex items-center justify-between px-1 mb-2">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{files.length} PDF{files.length !== 1 && 's'}</span>
+                  <button onClick={(e) => {e.stopPropagation(); handleCardClick()}} className="text-[10px] font-bold text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline px-2 py-1 rounded hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors">
+                      + Add PDF
+                  </button>
+               </div>
+           )}
+
           {files.map((fileItem, index) => (
             <div 
               key={fileItem.id}
-              className="flex items-center justify-between p-3.5 bg-white border border-slate-100 rounded-xl shadow-sm hover:shadow-md hover:border-brand-200 transition-all group animate-slide-up"
+              className="relative flex items-center gap-3 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm hover:shadow-md hover:border-brand-200 dark:hover:border-brand-800 transition-all group animate-slide-up"
               style={{ animationDelay: `${index * 50}ms` }}
             >
-              <div className="flex items-center gap-4 overflow-hidden">
-                <div className="flex-shrink-0 w-10 h-10 bg-rose-50 rounded-lg flex items-center justify-center border border-rose-100 group-hover:scale-105 transition-transform">
-                  <FileText className="w-5 h-5 text-rose-500" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-slate-700 truncate group-hover:text-brand-600 transition-colors">{fileItem.file.name}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                      {(fileItem.file.size / 1024 / 1024).toFixed(2)} MB
-                    </span>
-                    {multiple && <span className="text-[10px] text-slate-400">#{index + 1}</span>}
-                  </div>
+              {/* Drag Handle Visual (only if moveable) */}
+              {multiple && onMoveUp && (
+                 <div className="text-slate-300 dark:text-slate-600 cursor-grab active:cursor-grabbing hidden sm:block">
+                    <GripVertical className="w-4 h-4" />
+                 </div>
+              )}
+
+              <div className="flex-shrink-0 w-10 h-10 bg-rose-50 dark:bg-rose-950/30 rounded-lg flex items-center justify-center border border-rose-100 dark:border-rose-900/50 text-rose-500 dark:text-rose-400 group-hover:scale-105 transition-transform">
+                 <FileText className="w-5 h-5" />
+              </div>
+              
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors" title={fileItem.file.name}>
+                  {fileItem.file.name}
+                </p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                    {formatSize(fileItem.file.size)}
+                  </span>
                 </div>
               </div>
-              <button
-                onClick={(e) => { e.stopPropagation(); onRemoveFile(fileItem.id); }}
-                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
-                title="Remove file"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              
+              <div className="flex items-center gap-1">
+                {multiple && onMoveUp && onMoveDown && (
+                  <div className="flex flex-col gap-0.5">
+                    <button 
+                      onClick={(e) => {e.stopPropagation(); onMoveUp(index)}}
+                      disabled={index === 0}
+                      className="p-1 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
+                      title="Move Up"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button 
+                      onClick={(e) => {e.stopPropagation(); onMoveDown(index)}}
+                      disabled={index === files.length - 1}
+                      className="p-1 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
+                      title="Move Down"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <div className="w-px h-8 bg-slate-100 dark:bg-slate-800 mx-1"></div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemoveFile(fileItem.id); }}
+                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
+                  title="Remove file"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           ))}
         </div>

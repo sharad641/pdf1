@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -31,71 +32,146 @@
               'fade-in': 'fadeIn 0.5s ease-out',
               'slide-up': 'slideUp 0.5s ease-out',
               'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'bounce-subtle': 'bounceSubtle 2s infinite',
+              'spin-slow': 'spin 3s linear infinite',
             },
             keyframes: {
               fadeIn: {
-                '0%': { opacity: '0' },
-                '100%': { opacity: '1' },
+                '0%': { opacity: '0', transform: 'scale(0.98)' },
+                '100%': { opacity: '1', transform: 'scale(1)' },
               },
               slideUp: {
-                '0%': { transform: 'translateY(10px)', opacity: '0' },
+                '0%': { transform: 'translateY(20px)', opacity: '0' },
                 '100%': { transform: 'translateY(0)', opacity: '1' },
+              },
+              bounceSubtle: {
+                '0%, 100%': { transform: 'translateY(-5%)', animationTimingFunction: 'cubic-bezier(0.8,0,1,1)' },
+                '50%': { transform: 'translateY(0)', animationTimingFunction: 'cubic-bezier(0,0,0.2,1)' },
               }
+            },
+            boxShadow: {
+              'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.07)',
+              'glow': '0 0 20px rgba(14, 165, 233, 0.5)',
             }
           }
         }
       }
     </script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #f8fafc; /* Slate 50 */
       }
       
-      /* Custom Scrollbar for nicer feel */
+      /* Smooth Scrolling */
+      html {
+        scroll-behavior: smooth;
+      }
+
+      /* Custom Scrollbar */
       ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
       }
       ::-webkit-scrollbar-track {
         background: transparent;
       }
       ::-webkit-scrollbar-thumb {
         background: #cbd5e1;
-        border-radius: 4px;
+        border-radius: 10px;
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
       }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #475569;
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
+      }
 
-      /* Input Range Customization */
+      /* Range Slider Customization */
       input[type=range] {
         -webkit-appearance: none; 
-        background: transparent; 
+        appearance: none;
+        background: transparent;
+        cursor: pointer;
       }
+      
+      /* Webkit Thumb (Chrome, Safari, Edge) */
       input[type=range]::-webkit-slider-thumb {
         -webkit-appearance: none;
+        height: 18px;
+        width: 18px;
+        border-radius: 50%;
+        background: #0ea5e9; /* brand-500 */
+        margin-top: -6px; /* Offsets thumb to center on the track */
+        box-shadow: 0 0 0 2px #ffffff, 0 2px 4px rgba(0,0,0,0.1); 
+        transition: transform 0.1s ease, box-shadow 0.1s ease;
+      }
+
+      /* Track for Webkit - needed to ensure the background class on input works properly with margin-top on thumb */
+      input[type=range]::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 6px;
+        cursor: pointer;
+        border-radius: 999px;
+      }
+
+      /* Firefox Thumb */
+      input[type=range]::-moz-range-thumb {
+        height: 18px;
+        width: 18px;
+        border: none;
+        border-radius: 50%;
+        background: #0ea5e9;
+        box-shadow: 0 0 0 2px #ffffff, 0 2px 4px rgba(0,0,0,0.1); 
+        transition: transform 0.1s ease, box-shadow 0.1s ease;
+      }
+
+      /* Interaction States */
+      input[type=range]:hover::-webkit-slider-thumb {
+        transform: scale(1.1);
       }
       input[type=range]:focus {
-        outline: none; 
+        outline: none;
+      }
+      input[type=range]:focus::-webkit-slider-thumb {
+        box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.3);
+      }
+      
+      /* Dark Mode Overrides */
+      .dark input[type=range]::-webkit-slider-thumb {
+        box-shadow: 0 0 0 2px #0f172a; /* slate-900 */
+      }
+      .dark input[type=range]::-moz-range-thumb {
+        box-shadow: 0 0 0 2px #0f172a;
+      }
+      
+      .glass-panel {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+      .dark .glass-panel {
+        background: rgba(15, 23, 42, 0.6);
       }
     </style>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
+    "vite": "https://esm.sh/vite@^7.3.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "pdf-lib": "https://esm.sh/pdf-lib@^1.17.1",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "vite": "https://esm.sh/vite@^7.3.0"
+    "pdf-lib": "https://esm.sh/pdf-lib@^1.17.1"
   }
 }
 </script>
 </head>
-  <body class="bg-slate-50 text-slate-900 antialiased selection:bg-brand-100 selection:text-brand-900">
+  <body class="antialiased selection:bg-brand-200 selection:text-brand-900 dark:selection:bg-brand-900 dark:selection:text-brand-100">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

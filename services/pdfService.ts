@@ -1,5 +1,5 @@
 import { PDFDocument, rgb, degrees, StandardFonts, PDFPage, PDFFont, PDFImage } from 'pdf-lib';
-import { WatermarkConfig } from '../types';
+import { WatermarkConfig, PdfMetadata } from '../types';
 
 const DEFAULT_WATERMARK_TEXT = 'vtunotesforall';
 const STRICT_WATERMARK_COLOR = rgb(0.5, 0.5, 0.5); 
@@ -133,10 +133,19 @@ const applyWatermarkToPage = (
 export const mergeAndWatermarkPdfs = async (
   coverFile: File,
   contentFiles: File[],
-  onProgress: (progress: number) => void
+  onProgress: (progress: number) => void,
+  metadata?: PdfMetadata
 ): Promise<Uint8Array> => {
   try {
     const mergedPdf = await PDFDocument.create();
+    
+    // Set Metadata
+    if (metadata) {
+      if (metadata.title) mergedPdf.setTitle(metadata.title);
+      if (metadata.author) mergedPdf.setAuthor(metadata.author);
+      mergedPdf.setCreator('VTU Notes Merging System');
+    }
+
     const helveticaFont = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
     
     // Step 1: Cover Page
@@ -181,9 +190,18 @@ export const mergeAndWatermarkPdfs = async (
 export const processBatchFile = async (
   contentFile: File,
   coverFile: File | undefined,
-  config: WatermarkConfig
+  config: WatermarkConfig,
+  metadata?: PdfMetadata
 ): Promise<Uint8Array> => {
   const finalPdf = await PDFDocument.create();
+  
+  // Set Metadata
+  if (metadata) {
+    if (metadata.title) finalPdf.setTitle(metadata.title);
+    if (metadata.author) finalPdf.setAuthor(metadata.author);
+    finalPdf.setCreator('VTU Notes Merging System');
+  }
+
   const helveticaFont = await finalPdf.embedFont(StandardFonts.HelveticaBold);
 
   // Embed Logo if exists
@@ -230,6 +248,7 @@ export const processBatchFile = async (
  */
 export const mergeProcessedFiles = async (processedFiles: Uint8Array[]): Promise<Uint8Array> => {
   const mergedPdf = await PDFDocument.create();
+  mergedPdf.setCreator('VTU Notes Merging System');
   
   for (const bytes of processedFiles) {
     const doc = await PDFDocument.load(bytes);
