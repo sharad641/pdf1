@@ -2,8 +2,8 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata, EditorPage } from './types';
-import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles, generatePdfThumbnails, buildPdfFromEditor } from './services/pdfService';
-import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun, RotateCcw, ChevronRight, GripHorizontal, RotateCw, Edit, Clock, XCircle, Share2, Info, Pencil, Save } from 'lucide-react';
+import { mergeAndWatermarkPdfs, processBatchFile, generatePdfThumbnails, buildPdfFromEditor } from './services/pdfService';
+import { FileDown, CheckCircle, Layers, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Sparkles, FileText, Undo2, Trash2, ArrowRightCircle, Plus, RotateCw, Edit, Clock, Info, Pencil } from 'lucide-react';
 
 // --- DEFAULT LOGO GENERATION ---
 const DEFAULT_LOGO_SVG = `
@@ -181,14 +181,14 @@ const App: React.FC = () => {
       await new Promise(r => setTimeout(r, 800)); // Cinematic delay
       if (mode === 'MERGE') {
         const bytes = await mergeAndWatermarkPdfs(coverFile[0].file, contentFiles.map(f => f.file), (p) => setProcessingState(prev => ({...prev, progress: p, message: 'Processing pages...'})), metadata);
-        setMergedPdfUrl(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })));
+        setMergedPdfUrl(URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' })));
         addActivity(metadata.title || 'Merged Document', 'Merge');
       } else {
         const results: ProcessedFile[] = [];
         for (let i = 0; i < contentFiles.length; i++) {
           setProcessingState({ status: MergeStatus.PROCESSING, progress: ((i/contentFiles.length)*100), message: `Processing ${i+1}/${contentFiles.length}` });
           const bytes = await processBatchFile(contentFiles[i].file, coverFile[0]?.file, wmConfig, metadata);
-          results.push({ id: contentFiles[i].id, originalName: contentFiles[i].file.name, downloadFilename: `${contentFiles[i].file.name.replace('.pdf','')}_${filenameSuffix}.pdf`, processedData: bytes, downloadUrl: URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })) });
+          results.push({ id: contentFiles[i].id, originalName: contentFiles[i].file.name, downloadFilename: `${contentFiles[i].file.name.replace('.pdf','')}_${filenameSuffix}.pdf`, processedData: bytes, downloadUrl: URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' })) });
         }
         setProcessedFiles(results);
         addActivity(`Batch of ${contentFiles.length} files`, 'Watermark');
@@ -205,7 +205,7 @@ const App: React.FC = () => {
      setProcessingState({ status: MergeStatus.PROCESSING, progress: 30, message: "Compiling..." });
      try {
          const bytes = await buildPdfFromEditor(editorPages, editorSourceFiles);
-         setMergedPdfUrl(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })));
+         setMergedPdfUrl(URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' })));
          setProcessingState({ status: MergeStatus.SUCCESS, progress: 100 });
          addActivity('Custom Edit', 'Editor');
          setToast({ msg: "PDF Recompiled Successfully", type: 'success' });
