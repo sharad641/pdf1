@@ -3,7 +3,7 @@ import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata, EditorPage } from './types';
 import { mergeAndWatermarkPdfs, processBatchFile, generatePdfThumbnails, buildPdfFromEditor, mergeProcessedFiles } from './services/pdfService';
-import { FileDown, CheckCircle, Layers, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Sparkles, FileText, Undo2, Trash2, ArrowRightCircle, Plus, RotateCw, Edit, Clock, Info, Pencil, Package } from 'lucide-react';
+import { FileDown, CheckCircle, Layers, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Sparkles, FileText, Undo2, Trash2, ArrowRightCircle, Plus, RotateCw, Edit, Clock, Info, Pencil, Package, LayoutTemplate } from 'lucide-react';
 
 // --- DEFAULT LOGO GENERATION ---
 const DEFAULT_LOGO_SVG = `
@@ -111,6 +111,7 @@ const App: React.FC = () => {
   // State Management
   const [mode, setMode] = useState<AppMode>('MERGE');
   const [coverFile, setCoverFile] = useState<FileWithId[]>([]);
+  const [useDefaultCover, setUseDefaultCover] = useState(false); // Default Cover Toggle State
   const [contentFiles, setContentFiles] = useState<FileWithId[]>([]);
   const [editorPages, setEditorPages] = useState<EditorPage[]>([]);
   const [editorSourceFiles, setEditorSourceFiles] = useState<FileWithId[]>([]);
@@ -185,7 +186,9 @@ const App: React.FC = () => {
             coverFile[0]?.file, 
             contentFiles.map(f => f.file), 
             (p) => setProcessingState(prev => ({...prev, progress: p, message: 'Processing pages...'})), 
-            metadata
+            metadata,
+            wmConfig.logoFile, // Pass the loaded logo for default cover generation
+            useDefaultCover // Pass the toggle state
         );
         setMergedPdfUrl(URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' })));
         addActivity(metadata.title || 'Merged Document', 'Merge');
@@ -514,6 +517,26 @@ const App: React.FC = () => {
                                                         onRemoveFile={() => {setCoverFile([]); setMergedPdfUrl(null);}} 
                                                         required={false}
                                                     />
+                                                    
+                                                    {/* Default Cover Toggle */}
+                                                    {coverFile.length === 0 && (
+                                                       <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-700 -mt-2 shadow-sm animate-fade-in">
+                                                            <div className="flex items-center gap-3">
+                                                               <div className="p-2 bg-brand-50 dark:bg-brand-900/20 text-brand-600 rounded-lg">
+                                                                  <LayoutTemplate className="w-4 h-4" />
+                                                               </div>
+                                                               <div>
+                                                                  <h4 className="font-bold text-xs text-slate-700 dark:text-slate-200">Include Default Cover</h4>
+                                                                  <p className="text-[10px] text-slate-500">Auto-generate VTU Notes cover page</p>
+                                                               </div>
+                                                            </div>
+                                                            <label className="relative inline-flex items-center cursor-pointer">
+                                                              <input type="checkbox" checked={useDefaultCover} onChange={e => setUseDefaultCover(e.target.checked)} className="sr-only peer" />
+                                                              <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-600"></div>
+                                                            </label>
+                                                        </div>
+                                                    )}
+
                                                    <UploadZone 
                                                         id="content" 
                                                         label="Content Files" 

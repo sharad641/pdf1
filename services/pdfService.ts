@@ -132,13 +132,243 @@ const applyWatermarkToPage = (
 };
 
 /**
+ * Generates the Default Cover Page if none is provided.
+ * Replicates the design: Split BG, Cards, Pills, Community Hub.
+ * Ensures only 1 page is generated (Requirement: remove page 2).
+ */
+const generateDefaultCoverPage = async (doc: PDFDocument, logoFile: File | null) => {
+  const page = doc.addPage([595.28, 841.89]); // A4 Size
+  const { width, height } = page.getSize();
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const fontReg = await doc.embedFont(StandardFonts.Helvetica);
+
+  const darkBlue = rgb(0.04, 0.09, 0.25);
+  const brandCyan = rgb(0.0, 0.7, 0.8);
+  const cardBlue = rgb(0.1, 0.2, 0.5);
+
+  // 1. Split Background
+  // Top Part (Blue) approx 35%
+  const headerHeight = height * 0.35;
+  page.drawRectangle({
+    x: 0, y: height - headerHeight,
+    width, height: headerHeight,
+    color: darkBlue,
+  });
+
+  // Top Glow effect
+  page.drawRectangle({
+    x: 0, y: height - (headerHeight * 0.8),
+    width, height: headerHeight * 0.8,
+    color: rgb(0.05, 0.12, 0.35),
+    opacity: 0.5
+  });
+
+  let currentY = height - 80;
+
+  // 2. Logo
+  if (logoFile) {
+    try {
+      const logoBytes = await logoFile.arrayBuffer();
+      let logoImage;
+      if (logoFile.type === 'image/jpeg' || logoFile.name.endsWith('.jpg')) {
+        logoImage = await doc.embedJpg(logoBytes);
+      } else {
+        logoImage = await doc.embedPng(logoBytes);
+      }
+      
+      const logoDims = logoImage.scale(0.2); // Scale down
+      page.drawImage(logoImage, {
+        x: (width / 2) - (logoDims.width / 2),
+        y: currentY - logoDims.height,
+        width: logoDims.width,
+        height: logoDims.height,
+      });
+      currentY -= (logoDims.height + 20);
+    } catch (e) {
+      console.warn("Failed to embed logo for default cover", e);
+      currentY -= 50;
+    }
+  } else {
+    currentY -= 80; 
+  }
+
+  // 3. Title Text
+  const title = "vtunotesforall.in";
+  const titleSize = 42;
+  const titleWidth = fontBold.widthOfTextAtSize(title, titleSize);
+  
+  page.drawText(title, {
+    x: (width / 2) - (titleWidth / 2),
+    y: currentY,
+    size: titleSize,
+    font: fontBold,
+    color: rgb(1, 1, 1),
+  });
+
+  // 4. Subtitle
+  const subtitle = "EXCELLENCE IN ENGINEERING RESOURCES";
+  const subSize = 10;
+  const subWidth = fontBold.widthOfTextAtSize(subtitle, subSize);
+  
+  page.drawText(subtitle, {
+    x: (width / 2) - (subWidth / 2),
+    y: currentY - 25,
+    size: subSize,
+    font: fontBold,
+    color: brandCyan, 
+  });
+
+  // --- CARDS SECTION ---
+  const cardY = height - headerHeight - 30; // Start just below header split
+  const cardGap = 20;
+  const cardWidth = (width - 100 - cardGap) / 2; // 50 margin each side
+  const cardHeight = 140;
+
+  // Left Card (About Us) - White
+  page.drawRectangle({
+    x: 50, y: cardY - cardHeight, width: cardWidth, height: cardHeight,
+    color: rgb(1, 1, 1),
+    borderColor: rgb(0.9, 0.9, 0.9), borderWidth: 1
+  });
+  
+  page.drawText("About Us", {
+    x: 70, y: cardY - 30, size: 14, font: fontBold, color: darkBlue
+  });
+  page.drawText("A specialized digital ecosystem for VTU\nengineers. We provide syllabus-aligned,\nexam-centric resources to drive academic\nmastery and career success.", {
+    x: 70, y: cardY - 55, size: 9, font: fontReg, color: rgb(0.4, 0.4, 0.4), lineHeight: 12
+  });
+
+  // Right Card (Projects & Career) - Blue
+  page.drawRectangle({
+    x: 50 + cardWidth + cardGap, y: cardY - cardHeight, width: cardWidth, height: cardHeight,
+    color: cardBlue,
+  });
+
+  page.drawText("Projects & Career", {
+    x: 50 + cardWidth + cardGap + 20, y: cardY - 30, size: 14, font: fontBold, color: brandCyan
+  });
+  
+  // Custom List Drawing for Right Card (Avoiding Unicode Bullets which crash WinAnsi)
+  const listStartY = cardY - 55;
+  const listLineHeight = 16;
+  const items = [
+      "Placement Stories & Help",
+      "Professional Project Inquiry",
+      "Expert Career Guidance"
+  ];
+  
+  items.forEach((item, i) => {
+      const itemY = listStartY - (i * listLineHeight);
+      // Draw Bullet Circle
+      page.drawCircle({ x: 50 + cardWidth + cardGap + 20, y: itemY + 3, size: 2, color: rgb(1,1,1) });
+      // Draw Text
+      page.drawText(item, { x: 50 + cardWidth + cardGap + 30, y: itemY, size: 9, font: fontReg, color: rgb(1, 1, 1) });
+  });
+
+  // --- PILL BUTTONS SECTION ---
+  const pillStartY = cardY - cardHeight - 30;
+  const pillHeight = 30;
+  const pillGapY = 15;
+  const pills = [
+    ["SGPA Calculator", "Previous Year Papers"],
+    ["Model Question Papers", "Detailed QP Solutions"],
+    ["Placement Stories", "Semester Blueprints"]
+  ];
+
+  // Helper to draw Diamond
+  const drawDiamond = (cx: number, cy: number, r: number, color: any) => {
+     const path = `M ${cx} ${cy+r} L ${cx+r} ${cy} L ${cx} ${cy-r} L ${cx-r} ${cy} Z`;
+     page.drawSvgPath(path, { color, borderWidth: 0 });
+  };
+
+  pills.forEach((row, rowIndex) => {
+    const y = pillStartY - (rowIndex * (pillHeight + pillGapY));
+    const midY = y - (pillHeight/2);
+    
+    // Left Pill
+    page.drawRectangle({ x: 50, y: y - pillHeight, width: cardWidth, height: pillHeight, color: rgb(0.96, 0.98, 1) });
+    drawDiamond(62, midY + 15, 3, rgb(0.1, 0.1, 0.2)); // Adjusted Y for PDF coords (bottom-up) - wait, y is top of rect in drawing logic? 
+    // PDFLib drawText y is baseline. drawRectangle y is bottom-left usually. 
+    // In this func, I used y for top of text. 
+    // drawRectangle y: y - pillHeight. So bottom is y-pillHeight.
+    // midY = y - pillHeight/2.
+    // Let's use simpler relative coords.
+    // Text is at y-20. 
+    // Icon should be around y-17.
+    
+    drawDiamond(62, y - 17, 3, rgb(0.1, 0.1, 0.2));
+    page.drawText(row[0], { x: 72, y: y - 20, size: 9, font: fontBold, color: rgb(0.1, 0.1, 0.2) });
+
+    // Right Pill
+    const rightPillX = 50 + cardWidth + cardGap;
+    page.drawRectangle({ x: rightPillX, y: y - pillHeight, width: cardWidth, height: pillHeight, color: rgb(0.96, 0.98, 1) });
+    drawDiamond(rightPillX + 12, y - 17, 3, rgb(0.1, 0.1, 0.2));
+    page.drawText(row[1], { x: rightPillX + 22, y: y - 20, size: 9, font: fontBold, color: rgb(0.1, 0.1, 0.2) });
+  });
+
+  // --- COMMUNITY HUB SECTION ---
+  const hubY = pillStartY - (3 * (pillHeight + pillGapY)) - 20;
+  const hubHeight = 150;
+  
+  page.drawRectangle({
+    x: 50, y: hubY - hubHeight, width: width - 100, height: hubHeight,
+    color: rgb(0.95, 0.96, 0.98)
+  });
+
+  page.drawText("Community Hub", {
+    x: 70, y: hubY - 30, size: 14, font: fontBold, color: rgb(0.1, 0.1, 0.1)
+  });
+  page.drawText("Join thousands of VTU students in our digital circles.", {
+    x: 70, y: hubY - 45, size: 9, font: fontReg, color: rgb(0.5, 0.5, 0.5)
+  });
+
+  // Icons (Simulated with squares)
+  const iconY = hubY - 90;
+  const iconSize = 30;
+  // const iconGap = (width - 100 - 100) / 3;
+
+  // Icon 1
+  page.drawRectangle({ x: 100, y: iconY, width: iconSize, height: iconSize, color: rgb(0, 0.6, 0.5) });
+  page.drawText("W", { x: 108, y: iconY + 8, size: 14, font: fontBold, color: rgb(1,1,1) });
+  page.drawText("Updates", { x: 95, y: iconY - 15, size: 9, font: fontBold, color: rgb(0,0,0) });
+
+  // Icon 2 (Center)
+  const centerX = width / 2;
+  page.drawRectangle({ x: centerX - 15, y: iconY, width: iconSize, height: iconSize, color: rgb(0, 0.6, 0.5) });
+  page.drawText("W", { x: centerX - 7, y: iconY + 8, size: 14, font: fontBold, color: rgb(1,1,1) });
+  page.drawText("Forum", { x: centerX - 15, y: iconY - 15, size: 9, font: fontBold, color: rgb(0,0,0) });
+
+  // Icon 3
+  page.drawRectangle({ x: width - 130, y: iconY, width: iconSize + 10, height: iconSize, color: rgb(0.9, 0.1, 0.1) });
+  page.drawText("nammaVTUbros", { x: width - 155, y: iconY - 15, size: 9, font: fontBold, color: rgb(0,0,0) });
+
+
+  // Footer
+  const footerText = "vtunotesforall.in   |   EMPOWERING ENGINEERS EVERY SEMESTER";
+  const fWidth = fontBold.widthOfTextAtSize(footerText, 8);
+  
+  // Footer BG
+  page.drawRectangle({ x: 0, y: 0, width, height: 60, color: darkBlue });
+  
+  page.drawText(footerText, {
+      x: (width/2) - (fWidth/2),
+      y: 25,
+      size: 8,
+      font: fontBold,
+      color: rgb(1,1,1)
+  });
+};
+
+/**
  * Merges PDFs (Strict Mode)
  */
 export const mergeAndWatermarkPdfs = async (
   coverFile: File | undefined,
   contentFiles: File[],
   onProgress: (progress: number) => void,
-  metadata?: PdfMetadata
+  metadata?: PdfMetadata,
+  defaultCoverLogo?: File | null, // Param for default cover generation
+  useDefaultCover: boolean = false // Flag to enable default cover
 ): Promise<Uint8Array> => {
   try {
     const mergedPdf = await PDFDocument.create();
@@ -152,13 +382,18 @@ export const mergeAndWatermarkPdfs = async (
 
     const helveticaFont = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
     
-    // Step 1: Cover Page
+    // Step 1: Cover Page logic
     if (coverFile) {
       onProgress(5);
       const coverBytes = await coverFile.arrayBuffer();
       const coverDoc = await PDFDocument.load(coverBytes);
-      const copiedCoverPages = await mergedPdf.copyPages(coverDoc, coverDoc.getPageIndices());
+      const indices = coverDoc.getPageIndices();
+      const copiedCoverPages = await mergedPdf.copyPages(coverDoc, indices);
       copiedCoverPages.forEach((page) => mergedPdf.addPage(page));
+    } else if (useDefaultCover) {
+      // GENERATE DEFAULT COVER (Single Page) ONLY if flag is true
+      onProgress(5);
+      await generateDefaultCoverPage(mergedPdf, defaultCoverLogo || null);
     }
     
     onProgress(15);
@@ -234,7 +469,7 @@ export const processBatchFile = async (
     const coverDoc = await PDFDocument.load(coverBytes);
     const copiedCoverPages = await finalPdf.copyPages(coverDoc, coverDoc.getPageIndices());
     copiedCoverPages.forEach(p => finalPdf.addPage(p));
-  }
+  } 
 
   // 2. Add Content (With Watermark)
   const contentBytes = await contentFile.arrayBuffer();
