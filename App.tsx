@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import Header from './components/Header';
 import UploadZone from './components/UploadZone';
-import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata } from './types';
-import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles } from './services/pdfService';
-import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun, RotateCcw } from 'lucide-react';
+import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata, EditorPage } from './types';
+import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles, generatePdfThumbnails, buildPdfFromEditor } from './services/pdfService';
+import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun, RotateCcw, ChevronRight, GripHorizontal, RotateCw, Edit, Clock, XCircle, Share2, Info, Pencil, Save, Sliders } from 'lucide-react';
 
 // --- DEFAULT LOGO GENERATION ---
 const DEFAULT_LOGO_SVG = `
@@ -16,18 +16,16 @@ const DEFAULT_LOGO_SVG = `
     </style>
   </defs>
   <circle class="cls-border" cx="250" cy="250" r="230"/>
-  <!-- Graduation Cap -->
   <path class="cls-fill" d="M250 110 L100 170 L250 230 L400 170 Z"/>
   <rect class="cls-fill" x="390" y="170" width="6" height="50"/>
   <circle class="cls-fill" cx="393" cy="230" r="10"/>
-  <!-- Open Book -->
   <path class="cls-fill" d="M250 240 L250 370 C250 370 330 390 390 360 L390 230 C330 260 250 240 250 240 Z"/>
   <path class="cls-fill" d="M250 240 L250 370 C250 370 170 390 110 360 L110 230 C170 260 250 240 250 240 Z"/>
-  <!-- Text -->
   <text class="cls-text" x="250" y="450" text-anchor="middle">vtunotesforall</text>
 </svg>
 `;
 
+// Helper for logo loading
 const loadDefaultLogo = async (): Promise<File> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -45,862 +43,668 @@ const loadDefaultLogo = async (): Promise<File> => {
                 return; 
             }
             ctx.drawImage(img, 0, 0);
-            
             canvas.toBlob((blob) => {
                 URL.revokeObjectURL(url);
                 if (blob) {
                     const file = new File([blob], "vtunotesforall_logo.png", { type: 'image/png' });
                     resolve(file);
-                } else {
-                    reject(new Error('Blob creation failed'));
-                }
+                } else reject(new Error('Blob creation failed'));
             }, 'image/png');
         };
-        img.onerror = (e) => {
-            URL.revokeObjectURL(url);
-            reject(e);
-        };
+        img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
         img.src = url;
     });
 };
 
+// --- TOAST COMPONENT ---
+const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
+    useEffect(() => {
+        const timer = setTimeout(onClose, 4000);
+        return () => clearTimeout(timer);
+    }, [onClose]);
+
+    const bgColors = {
+        success: 'bg-emerald-500',
+        error: 'bg-rose-500',
+        info: 'bg-slate-800'
+    };
+
+    return (
+        <div className="fixed top-24 right-4 z-[100] animate-slide-up flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl shadow-black/10 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+            <div className={`w-2 h-2 rounded-full ${bgColors[type]}`}></div>
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{message}</p>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-white"><X className="w-4 h-4" /></button>
+        </div>
+    );
+};
+
+// --- RECENT ACTIVITY STORAGE ---
+const useRecentActivity = () => {
+    const [recent, setRecent] = useState<{id: string, name: string, date: string, type: string}[]>([]);
+    
+    useEffect(() => {
+        const stored = localStorage.getItem('vtu_recent_activity');
+        if (stored) setRecent(JSON.parse(stored));
+    }, []);
+
+    const addActivity = (name: string, type: string) => {
+        const newItem = {
+            id: Math.random().toString(36).substr(2, 9),
+            name,
+            date: new Date().toLocaleDateString(),
+            type
+        };
+        const updated = [newItem, ...recent].slice(0, 5);
+        setRecent(updated);
+        localStorage.setItem('vtu_recent_activity', JSON.stringify(updated));
+    };
+
+    return { recent, addActivity };
+};
+
 const App: React.FC = () => {
   const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-        return localStorage.getItem('theme') === 'dark' || 
-               (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
+    if (typeof window !== 'undefined') return localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
     return false;
   });
-  
+
+  // State Management
   const [mode, setMode] = useState<AppMode>('MERGE');
-  
   const [coverFile, setCoverFile] = useState<FileWithId[]>([]);
   const [contentFiles, setContentFiles] = useState<FileWithId[]>([]);
+  const [editorPages, setEditorPages] = useState<EditorPage[]>([]);
+  const [editorSourceFiles, setEditorSourceFiles] = useState<FileWithId[]>([]);
+  const [metadata, setMetadata] = useState<PdfMetadata>({ title: '', author: '' });
   
-  const [activeTab, setActiveTab] = useState<'watermark' | 'metadata'>('watermark');
-
-  const [metadata, setMetadata] = useState<PdfMetadata>({
-    title: '',
-    author: ''
-  });
-
+  // Watermark Config
   const [wmConfig, setWmConfig] = useState<WatermarkConfig>({
-    diagonal: true,
-    bottom: true,
-    top: false,
-    crossed: false,
-    textColor: '#808080',
-    textOpacity: 0.2,
-    logoFile: null,
-    logoOpacity: 0.5,
-    logoScale: 0.5
+    diagonal: true, bottom: true, top: false, crossed: false,
+    textColor: '#808080', textOpacity: 0.2, logoFile: null, logoOpacity: 0.5, logoScale: 0.5
   });
+  const [rotationAngle, setRotationAngle] = useState(60); // Dynamic rotation
 
+  // Batch Filename Config
   const [filenameSuffix, setFilenameSuffix] = useState('vtunotesforall');
-  const [batchMergedFilename, setBatchMergedFilename] = useState('All_Files_Merged');
   
-  const [processingState, setProcessingState] = useState<ProcessingState>({
-    status: MergeStatus.IDLE,
-    progress: 0,
-  });
-
+  const [processingState, setProcessingState] = useState<ProcessingState>({ status: MergeStatus.IDLE, progress: 0 });
   const [mergedPdfUrl, setMergedPdfUrl] = useState<string | null>(null);
   const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
+  const [toast, setToast] = useState<{msg: string, type: 'success'|'error'|'info'} | null>(null);
   
-  const resultsRef = useRef<HTMLDivElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const { recent, addActivity } = useRecentActivity();
 
-  // Load default logo on mount
+  // Initialization
   useEffect(() => {
-    loadDefaultLogo().then(file => {
-        setWmConfig(prev => ({ ...prev, logoFile: file }));
-    }).catch(err => console.error("Failed to load default logo", err));
+    loadDefaultLogo().then(file => setWmConfig(prev => ({ ...prev, logoFile: file }))).catch(e => console.error(e));
   }, []);
 
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
+    if (darkMode) { document.documentElement.classList.add('dark'); localStorage.setItem('theme', 'dark'); }
+    else { document.documentElement.classList.remove('dark'); localStorage.setItem('theme', 'light'); }
   }, [darkMode]);
 
-  const logoPreviewUrl = useMemo(() => {
-    if (wmConfig.logoFile) {
-      return URL.createObjectURL(wmConfig.logoFile);
-    }
-    return null;
-  }, [wmConfig.logoFile]);
-
+  // Derived State
+  const logoPreviewUrl = useMemo(() => wmConfig.logoFile ? URL.createObjectURL(wmConfig.logoFile) : null, [wmConfig.logoFile]);
   const generateId = () => Math.random().toString(36).substring(2, 9);
+  const isReady = mode === 'MERGE' ? (coverFile.length > 0 && contentFiles.length > 0) : mode === 'EDITOR' ? editorPages.length > 0 : (contentFiles.length > 0);
 
-  useEffect(() => {
-    if (processingState.status === MergeStatus.SUCCESS && resultsRef.current) {
-      setTimeout(() => {
-        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 100);
-    }
-  }, [processingState.status]);
-
-  const handleCoverSelect = useCallback((files: File[]) => {
-    if (files.length > 0) setCoverFile([{ id: generateId(), file: files[0] }]);
-  }, []);
-
-  const handleContentSelect = useCallback((files: File[]) => {
-    const newFiles = files.map(f => ({ id: generateId(), file: f }));
-    setContentFiles(prev => [...prev, ...newFiles]);
-  }, []);
-
-  const removeCover = useCallback(() => {
-    setCoverFile([]);
-    cleanupResults();
-  }, []);
-
-  const removeContent = useCallback((id: string) => {
-    setContentFiles(prev => prev.filter(f => f.id !== id));
-    cleanupResults();
-  }, []);
-
-  const clearAllFiles = () => {
-    if (window.confirm("Are you sure you want to remove all files?")) {
-      setCoverFile([]);
-      setContentFiles([]);
-      cleanupResults();
-    }
-  };
-
-  const moveFile = (index: number, direction: 'up' | 'down') => {
-    const newFiles = [...contentFiles];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
-    if (targetIndex >= 0 && targetIndex < newFiles.length) {
-      [newFiles[index], newFiles[targetIndex]] = [newFiles[targetIndex], newFiles[index]];
-      setContentFiles(newFiles);
-    }
-  };
-
-  const handleLogoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setWmConfig(prev => ({ ...prev, logoFile: e.target.files![0] }));
-    }
-  };
+  // --- HANDLERS ---
+  const handleCoverSelect = useCallback((files: File[]) => { if (files.length > 0) setCoverFile([{ id: generateId(), file: files[0] }]); }, []);
+  const handleContentSelect = useCallback((files: File[]) => { setContentFiles(prev => [...prev, ...files.map(f => ({ id: generateId(), file: f }))]); }, []);
   
-  const removeLogo = () => {
-    setWmConfig(prev => ({ ...prev, logoFile: null }));
-    if (logoInputRef.current) logoInputRef.current.value = '';
-  };
-
-  const restoreDefaultLogo = async () => {
+  const handleEditorFilesSelect = async (files: File[]) => {
+    setProcessingState({ status: MergeStatus.PROCESSING, progress: 10, message: "Parsing pages..." });
     try {
-        const file = await loadDefaultLogo();
-        setWmConfig(prev => ({ ...prev, logoFile: file }));
-    } catch (e) {
-        console.error("Failed to restore logo", e);
-    }
-  };
-
-  const cleanupResults = () => {
-    if (mergedPdfUrl) URL.revokeObjectURL(mergedPdfUrl);
-    processedFiles.forEach(f => URL.revokeObjectURL(f.downloadUrl));
-    setMergedPdfUrl(null);
-    setProcessedFiles([]);
-    setProcessingState({ status: MergeStatus.IDLE, progress: 0 });
-    setBatchMergedFilename('All_Files_Merged');
-  };
-
-  const switchMode = (newMode: AppMode) => {
-    if (newMode === mode) return;
-    setMode(newMode);
-    setCoverFile([]);
-    setContentFiles([]);
-    cleanupResults();
-    if (newMode === 'WATERMARK_ONLY') {
-      // Re-initialize default config including logo
-      loadDefaultLogo().then(logo => {
-          setWmConfig({
-            diagonal: true,
-            bottom: true,
-            top: false,
-            crossed: false,
-            textColor: '#808080',
-            textOpacity: 0.2,
-            logoFile: logo,
-            logoOpacity: 0.5,
-            logoScale: 0.5
-          });
-      });
-      setFilenameSuffix('vtunotesforall');
-    }
-  };
-
-  const toggleWmOption = (key: keyof Pick<WatermarkConfig, 'diagonal' | 'bottom' | 'top' | 'crossed'>) => {
-    setWmConfig(prev => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const getOutputFilename = (originalName: string) => {
-    const namePart = originalName.replace(/\.pdf$/i, '');
-    const cleanSuffix = filenameSuffix.trim();
-    if (!cleanSuffix) return `${namePart}.pdf`;
-    if (namePart.endsWith(`_${cleanSuffix}`) || namePart.endsWith(cleanSuffix)) {
-      return `${namePart}.pdf`;
-    }
-    return `${namePart}_${cleanSuffix}.pdf`;
-  };
-
-  const handleDownloadAllMerged = async () => {
-    if (processedFiles.length === 0) return;
-    
-    try {
-        const allBytes = processedFiles.map(f => f.processedData);
-        const mergedBytes = await mergeProcessedFiles(allBytes);
-        const blob = new Blob([mergedBytes as any], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        
-        const link = document.createElement('a');
-        link.href = url;
-        
-        let filename = batchMergedFilename.trim() || 'All_Files_Merged';
-        if (!filename.toLowerCase().endsWith('.pdf')) {
-            filename += '.pdf';
+        const newSourceFiles = files.map(f => ({ id: generateId(), file: f }));
+        setEditorSourceFiles(prev => [...prev, ...newSourceFiles]);
+        const allNewPages: EditorPage[] = [];
+        let count = 0;
+        for (const fileItem of newSourceFiles) {
+            const pages = await generatePdfThumbnails(fileItem);
+            allNewPages.push(...pages);
+            count++;
+            setProcessingState(prev => ({ ...prev, progress: 10 + (count / newSourceFiles.length) * 80 }));
         }
-
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    } catch (error) {
-        console.error("Failed to merge processed files", error);
-        alert("Failed to create combined PDF.");
+        setEditorPages(prev => [...prev, ...allNewPages]);
+        setProcessingState({ status: MergeStatus.IDLE, progress: 0 });
+    } catch (e) {
+        setProcessingState({ status: MergeStatus.ERROR, progress: 0 });
+        setToast({ msg: "Failed to parse PDF", type: 'error' });
     }
   };
 
   const handleProcess = async () => {
-    setProcessingState({ status: MergeStatus.PROCESSING, progress: 0, message: "Initializing..." });
-
+    if (mode === 'EDITOR') { await handleEditorSave(); return; }
+    setProcessingState({ status: MergeStatus.PROCESSING, progress: 0, message: "Starting engine..." });
     try {
-      await new Promise(r => setTimeout(r, 600)); 
-
+      await new Promise(r => setTimeout(r, 800)); // Cinematic delay
       if (mode === 'MERGE') {
-        if (coverFile.length === 0 || contentFiles.length === 0) return;
-
-        // Force reload default logo if somehow missing in merge mode strict config
-        // Actually mergeAndWatermarkPdfs uses DEFAULT_MERGE_CONFIG which we should update or pass metadata.
-        // The current implementation of mergeAndWatermarkPdfs uses a HARDCODED config. 
-        // We need to pass the current wmConfig if we want the logo to appear there, OR update the service.
-        // The previous service implementation for MERGE mode used `DEFAULT_MERGE_CONFIG` inside the service.
-        // Let's assume for MERGE mode we want strict rules, but maybe with our Logo? 
-        // The user said "whenever i select the logo include this".
-        // For now, MERGE mode uses strict hardcoded config in pdfService.ts. 
-        // WATERMARK_ONLY mode uses the UI config.
-
-        const mergedBytes = await mergeAndWatermarkPdfs(
-          coverFile[0].file,
-          contentFiles.map(f => f.file),
-          (p) => setProcessingState(prev => ({ ...prev, progress: p, message: "Merging pages..." })),
-          metadata
-        );
-
-        const blob = new Blob([mergedBytes as any], { type: 'application/pdf' });
-        setMergedPdfUrl(URL.createObjectURL(blob));
-
+        const bytes = await mergeAndWatermarkPdfs(coverFile[0].file, contentFiles.map(f => f.file), (p) => setProcessingState(prev => ({...prev, progress: p, message: 'Processing pages...'})), metadata);
+        setMergedPdfUrl(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })));
+        addActivity(metadata.title || 'Merged Document', 'Merge');
       } else {
-        if (contentFiles.length === 0) return;
-        
-        const total = contentFiles.length;
         const results: ProcessedFile[] = [];
-        const currentCover = coverFile.length > 0 ? coverFile[0].file : undefined;
-
-        for (let i = 0; i < total; i++) {
-          setProcessingState({ 
-            status: MergeStatus.PROCESSING, 
-            progress: ((i / total) * 100), 
-            message: `Processing file ${i + 1} of ${total}...` 
-          });
-
-          const f = contentFiles[i];
-          const bytes = await processBatchFile(f.file, currentCover, wmConfig, metadata);
-          const blob = new Blob([bytes as any], { type: 'application/pdf' });
-          
-          results.push({
-            id: f.id,
-            originalName: f.file.name,
-            downloadFilename: getOutputFilename(f.file.name),
-            processedData: bytes,
-            downloadUrl: URL.createObjectURL(blob)
-          });
+        for (let i = 0; i < contentFiles.length; i++) {
+          setProcessingState({ status: MergeStatus.PROCESSING, progress: ((i/contentFiles.length)*100), message: `Processing ${i+1}/${contentFiles.length}` });
+          const bytes = await processBatchFile(contentFiles[i].file, coverFile[0]?.file, wmConfig, metadata);
+          results.push({ id: contentFiles[i].id, originalName: contentFiles[i].file.name, downloadFilename: `${contentFiles[i].file.name.replace('.pdf','')}_${filenameSuffix}.pdf`, processedData: bytes, downloadUrl: URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })) });
         }
         setProcessedFiles(results);
+        addActivity(`Batch of ${contentFiles.length} files`, 'Watermark');
       }
-
-      setProcessingState({ status: MergeStatus.SUCCESS, progress: 100, message: "Done!" });
-
-    } catch (error) {
-      setProcessingState({ 
-        status: MergeStatus.ERROR, 
-        progress: 0, 
-        message: error instanceof Error ? error.message : "An unexpected error occurred." 
-      });
+      setProcessingState({ status: MergeStatus.SUCCESS, progress: 100, message: "Complete" });
+      setToast({ msg: "Processing Complete!", type: 'success' });
+    } catch (e) {
+      setProcessingState({ status: MergeStatus.ERROR, progress: 0, message: String(e) });
+      setToast({ msg: "An error occurred", type: 'error' });
     }
   };
 
-  const handleDownloadMerged = () => {
-    if (mergedPdfUrl) {
-      const link = document.createElement('a');
-      link.href = mergedPdfUrl;
-      link.download = metadata.title ? `${metadata.title.replace(/[^a-z0-9]/gi, '_')}.pdf` : 'VTU_Notes_Merged.pdf';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+  const handleEditorSave = async () => {
+     setProcessingState({ status: MergeStatus.PROCESSING, progress: 30, message: "Compiling..." });
+     try {
+         const bytes = await buildPdfFromEditor(editorPages, editorSourceFiles);
+         setMergedPdfUrl(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })));
+         setProcessingState({ status: MergeStatus.SUCCESS, progress: 100 });
+         addActivity('Custom Edit', 'Editor');
+         setToast({ msg: "PDF Recompiled Successfully", type: 'success' });
+     } catch(e) { 
+         setProcessingState({ status: MergeStatus.ERROR, progress: 0 }); 
+         setToast({ msg: "Compilation failed", type: 'error' });
+     }
   };
 
-  const isReady = mode === 'MERGE' 
-    ? (coverFile.length > 0 && contentFiles.length > 0)
-    : (contentFiles.length > 0); 
+  // Result Management Handlers
+  const updateResultFilename = (id: string, newName: string) => {
+    setProcessedFiles(prev => prev.map(f => f.id === id ? { ...f, downloadFilename: newName } : f));
+  };
+
+  const updateGlobalSuffix = (suffix: string) => {
+    setFilenameSuffix(suffix);
+    setProcessedFiles(prev => prev.map(f => ({
+        ...f,
+        downloadFilename: `${f.originalName.replace(/\.pdf$/i, '')}_${suffix}.pdf`
+    })));
+  };
+
+  const clearAll = () => {
+      setCoverFile([]); setContentFiles([]); setEditorPages([]); setEditorSourceFiles([]);
+      setProcessingState({ status: MergeStatus.IDLE, progress: 0 });
+      setMergedPdfUrl(null); setProcessedFiles([]);
+      setToast({ msg: "All files cleared", type: 'info' });
+  };
+
+  const shareApp = () => {
+      if (navigator.share) {
+          navigator.share({ title: 'VTU Notes Tools', text: 'Check out this awesome PDF tool for VTU students!', url: window.location.href });
+      } else {
+          setToast({ msg: "Link copied to clipboard", type: 'success' });
+          navigator.clipboard.writeText(window.location.href);
+      }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col font-sans text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
-      {/* Background Gradients */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-brand-200/20 dark:bg-brand-900/10 blur-[100px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-200/20 dark:bg-indigo-900/10 blur-[100px]" />
-      </div>
+    <div className="min-h-screen flex flex-col font-sans bg-surface-50 dark:bg-brand-950 transition-colors duration-500 overflow-x-hidden">
+      
+      {/* Dynamic Background Mesh */}
+      <div className="fixed inset-0 z-0 pointer-events-none opacity-40 dark:opacity-20 bg-gradient-mesh dark:bg-gradient-mesh-dark animate-float" />
 
-      <Header darkMode={darkMode} toggleDarkMode={() => setDarkMode(!darkMode)} />
+      <Header darkMode={darkMode} toggleDarkMode={() => setDarkMode(!darkMode)} onShare={shareApp} />
+      {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-      <main className="flex-grow w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-24 relative z-10">
+      <main className="flex-grow w-full max-w-[1400px] mx-auto px-4 sm:px-6 py-24 pb-40 lg:pb-24 relative z-10">
         
-        {/* Intro Section */}
-        <div className="text-center max-w-4xl mx-auto mb-12 lg:mb-16 animate-fade-in">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-brand-600 dark:text-brand-400 text-[11px] font-bold mb-6 lg:mb-8 tracking-widest uppercase">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Secure PDF Tools v2.0</span>
-          </div>
-          <h2 className="text-3xl md:text-5xl lg:text-6xl font-extrabold tracking-tight mb-6 leading-[1.1]">
-            Transform your PDFs <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-600 to-indigo-600 dark:from-brand-400 dark:to-indigo-400">Instantly & Securely</span>
-          </h2>
-          <p className="text-slate-600 dark:text-slate-400 text-base md:text-lg leading-relaxed max-w-2xl mx-auto">
-            Merge notes, apply custom watermarks, and organize files directly in your browser. 
-            No uploads, no servers, complete privacy.
-          </p>
+        {/* HERO SECTION */}
+        <div className="text-center max-w-4xl mx-auto mb-16 animate-fade-in relative">
+            <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-96 bg-brand-500/20 rounded-full blur-[100px] pointer-events-none"></div>
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/50 dark:bg-slate-800/50 border border-slate-200/50 dark:border-slate-700/50 backdrop-blur-md mb-6 shadow-sm animate-slide-up">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">The Ultimate Student PDF Tool Suite</span>
+            </div>
+            <h2 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-6 text-balance font-display">
+                <span className="bg-clip-text text-transparent bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900 dark:from-white dark:via-slate-200 dark:to-slate-400 drop-shadow-sm">
+                  Merge. Edit. Watermark.
+                </span>
+            </h2>
+            <p className="text-slate-600 dark:text-slate-400 text-lg md:text-xl max-w-2xl mx-auto leading-relaxed">
+                Professional-grade PDF tools running entirely in your browser. <br className="hidden md:block"/> No uploads, no limits, 100% secure.
+            </p>
         </div>
 
-        {/* Mode Toggles */}
-        <div className="flex justify-center mb-12 lg:mb-16 animate-fade-in" style={{ animationDelay: '100ms' }}>
-          <div className="bg-white dark:bg-slate-900 p-1.5 rounded-2xl shadow-xl shadow-slate-200/40 dark:shadow-black/40 border border-slate-200/60 dark:border-slate-800 inline-flex relative w-full sm:w-auto min-w-[320px] sm:min-w-[360px]">
-            <button
-              onClick={() => switchMode('MERGE')}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 md:px-6 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 relative z-10 ${mode === 'MERGE' ? 'text-white' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'}`}
-            >
-              <Layers className="w-4 h-4" />
-              Merge Mode
-            </button>
-            <button
-              onClick={() => switchMode('WATERMARK_ONLY')}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 md:px-6 py-3.5 rounded-xl text-sm font-bold transition-all duration-300 relative z-10 ${mode === 'WATERMARK_ONLY' ? 'text-white' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'}`}
-            >
-              <FileCheck className="w-4 h-4" />
-              Batch Process
-            </button>
-            
-            {/* Sliding Background */}
-            <div className={`absolute top-1.5 bottom-1.5 rounded-xl bg-slate-900 dark:bg-brand-600 shadow-lg shadow-slate-900/20 dark:shadow-brand-600/20 transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] ${mode === 'MERGE' ? 'left-1.5 w-[calc(50%-3px)]' : 'left-[calc(50%+3px)] w-[calc(50%-6px)]'}`}></div>
-          </div>
-        </div>
-
-        {/* Main Interface Wrapper */}
-        <div className="relative animate-fade-in" style={{ animationDelay: '200ms' }}>
-          
-          {/* Progress Overlay */}
-          <div className={`fixed inset-x-0 top-0 h-1.5 z-50 transition-opacity duration-300 ${processingState.status === MergeStatus.PROCESSING ? 'opacity-100' : 'opacity-0'}`}>
-             <div 
-              className="h-full bg-gradient-to-r from-brand-400 via-brand-500 to-indigo-500 shadow-[0_0_15px_rgba(14,165,233,0.6)] transition-all duration-300 ease-out"
-              style={{ width: `${processingState.progress}%` }}
-            />
-          </div>
-
-            {/* ERROR STATE */}
-            {processingState.status === MergeStatus.ERROR && (
-              <div className="max-w-2xl mx-auto mb-8 bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50 rounded-2xl p-6 flex items-start gap-4 animate-slide-up shadow-sm">
-                <div className="p-3 bg-white dark:bg-rose-950/50 rounded-full flex-shrink-0 shadow-sm border border-rose-100 dark:border-rose-900/50 text-rose-500 dark:text-rose-400">
-                  <AlertTriangle className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-rose-900 dark:text-rose-100">Process Failed</h3>
-                  <p className="text-sm text-rose-700 dark:text-rose-300 mt-1 leading-relaxed">{processingState.message}</p>
-                  <button onClick={cleanupResults} className="mt-4 text-xs font-bold bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-200 px-4 py-2 rounded-lg hover:bg-rose-200 dark:hover:bg-rose-900/60 transition-colors inline-flex items-center gap-2">
-                    <Undo2 className="w-3.5 h-3.5" /> Try Again
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* SUCCESS STATE */}
-            {processingState.status === MergeStatus.SUCCESS ? (
-               <div ref={resultsRef} className="glass-panel rounded-[2.5rem] p-8 md:p-12 lg:p-16 border border-white/40 dark:border-slate-700/40 shadow-2xl shadow-slate-200/50 dark:shadow-black/50 text-center animate-slide-up max-w-4xl mx-auto">
-                <div className="mb-8 relative inline-block">
-                    <div className="absolute inset-0 bg-emerald-500 blur-[40px] opacity-20 dark:opacity-40 rounded-full animate-pulse-slow"></div>
-                    <div className="relative w-24 h-24 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-emerald-500/30 text-white animate-bounce-subtle rotate-3">
-                        <CheckCircle className="w-12 h-12" />
-                    </div>
-                </div>
+        {/* DASHBOARD CONTAINER */}
+        <div className="glass-card rounded-[2.5rem] p-1.5 shadow-2xl shadow-brand-900/10 dark:shadow-black/40 animate-slide-up" style={{ animationDelay: '100ms' }}>
+            <div className="bg-white/50 dark:bg-slate-900/60 backdrop-blur-xl rounded-[2.2rem] overflow-hidden min-h-[600px] flex flex-col md:flex-row relative">
                 
-                <h3 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">All Done!</h3>
-                <p className="text-slate-600 dark:text-slate-400 text-lg mb-10 max-w-md mx-auto">
-                    Your files have been processed successfully and are ready for download.
-                </p>
-
-                {/* MERGE RESULT */}
-                {mode === 'MERGE' && mergedPdfUrl && (
-                  <div className="w-full max-w-md mx-auto space-y-4 animate-slide-up" style={{ animationDelay: '100ms' }}>
-                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:shadow-md transition-shadow flex items-center gap-5 text-left">
-                       <div className="w-16 h-16 bg-red-50 dark:bg-red-900/20 rounded-xl flex items-center justify-center text-red-500 dark:text-red-400 shrink-0 border border-red-100 dark:border-red-900/30">
-                          <FileText className="w-8 h-8" />
-                       </div>
-                       <div className="grow min-w-0">
-                          <div className="font-bold text-lg text-slate-800 dark:text-slate-200 truncate">
-                             {metadata.title ? metadata.title : 'VTU_Notes_Merged'}
-                          </div>
-                          <div className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1 uppercase tracking-wider">
-                             PDF Document
-                          </div>
-                       </div>
-                    </div>
-                    
-                    <button onClick={handleDownloadMerged} className="w-full group flex items-center justify-center gap-3 bg-slate-900 dark:bg-brand-600 hover:bg-slate-800 dark:hover:bg-brand-500 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-xl shadow-slate-900/20 dark:shadow-brand-500/20 hover:-translate-y-1 transition-all active:scale-95">
-                        <FileDown className="w-6 h-6 group-hover:animate-bounce" /> 
-                        <span>Download PDF</span>
-                    </button>
-                    
-                    <button onClick={cleanupResults} className="w-full text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white py-3 transition-colors flex items-center justify-center gap-2">
-                        <Undo2 className="w-4 h-4" /> Start New Merge
-                    </button>
-                  </div>
-                )}
-
-                {/* BATCH RESULTS */}
-                {mode === 'WATERMARK_ONLY' && processedFiles.length > 0 && (
-                   <div className="w-full animate-slide-up" style={{ animationDelay: '100ms' }}>
-                      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-                          <div className="p-4 md:p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col lg:flex-row justify-between items-center gap-4 bg-slate-50/50 dark:bg-slate-800/30">
-                             <div className="text-left w-full lg:w-auto">
-                                <h4 className="font-bold text-lg md:text-xl text-slate-900 dark:text-white flex items-center gap-2">
-                                    <CheckCircle className="w-5 h-5 text-emerald-500" />
-                                    Processed Files
-                                </h4>
-                                <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{processedFiles.length} documents ready.</p>
-                             </div>
-                             
-                             <div className="flex flex-col sm:flex-row items-center gap-2 bg-white dark:bg-slate-950 p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm w-full lg:w-auto">
-                                 <input 
-                                    type="text"
-                                    value={batchMergedFilename}
-                                    onChange={(e) => setBatchMergedFilename(e.target.value)}
-                                    className="text-sm border-none focus:ring-0 w-full sm:w-48 px-3 text-slate-700 dark:text-slate-200 font-medium placeholder-slate-400 bg-transparent py-2 sm:py-0"
-                                    placeholder="Merged Filename"
-                                 />
-                                 <button 
-                                    onClick={handleDownloadAllMerged}
-                                    className="w-full sm:w-auto bg-brand-600 hover:bg-brand-700 text-white px-4 py-2.5 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2 whitespace-nowrap shadow-sm"
-                                 >
-                                    <Download className="w-3.5 h-3.5" /> Merge & Download
-                                 </button>
-                             </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-slate-100 dark:bg-slate-800 max-h-[500px] overflow-y-auto custom-scrollbar">
-                             {processedFiles.map(pf => (
-                                <div key={pf.id} className="bg-white dark:bg-slate-900 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors flex items-center justify-between group">
-                                   <div className="flex items-center gap-4 min-w-0">
-                                      <div className="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-100 dark:border-emerald-900/30">
-                                         <FileText className="w-5 h-5" />
-                                      </div>
-                                      <div className="min-w-0 text-left">
-                                         <div className="font-semibold text-sm text-slate-700 dark:text-slate-200 truncate">{pf.downloadFilename}</div>
-                                         <div className="text-xs text-slate-400 dark:text-slate-500 truncate mt-0.5">{pf.originalName}</div>
-                                      </div>
-                                   </div>
-                                   <a href={pf.downloadUrl} download={pf.downloadFilename} className="p-2.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/30 rounded-lg transition-colors" title="Download File">
-                                      <Download className="w-5 h-5" />
-                                   </a>
-                                </div>
-                             ))}
-                          </div>
-                      </div>
-                      
-                      <div className="mt-8 text-center">
-                        <button onClick={cleanupResults} className="text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white flex items-center justify-center gap-2 mx-auto">
-                            <Undo2 className="w-4 h-4" /> Start Over
-                        </button>
-                      </div>
-                   </div>
-                )}
-              </div>
-            ) : (
-              /* INPUT & SETTINGS GRID */
-              <div className={`grid grid-cols-1 xl:grid-cols-12 gap-6 lg:gap-8 items-start ${processingState.status === MergeStatus.PROCESSING ? 'opacity-50 pointer-events-none grayscale-[0.8] blur-[1px]' : ''} transition-all duration-500`}>
-                
-                {/* Left Column: Input */}
-                <div className="xl:col-span-7 space-y-6 lg:space-y-8 animate-slide-up">
-                    <div className="glass-panel rounded-[2rem] p-1.5 shadow-xl shadow-slate-200/50 dark:shadow-black/20 border border-white/50 dark:border-slate-700/50">
-                        <div className="bg-white/50 dark:bg-slate-900/50 rounded-[1.7rem] p-5 md:p-8 space-y-8">
-                            
-                            {/* Actions Header */}
-                            <div className="flex justify-between items-center pb-4 border-b border-slate-200/50 dark:border-slate-700/50">
-                                <h3 className="text-xs font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                  <UploadZoneIcon className="w-4 h-4" />
-                                  Input Files
-                                </h3>
-                                {(coverFile.length > 0 || contentFiles.length > 0) && (
-                                    <button onClick={clearAllFiles} className="text-xs text-rose-600 dark:text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 flex items-center gap-1 font-bold px-3 py-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors">
-                                        <Trash2 className="w-3.5 h-3.5" /> Clear All
-                                    </button>
-                                )}
-                            </div>
-
-                            {/* Section 1: Cover */}
-                            <div>
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-slate-900 dark:bg-brand-600 text-white text-sm font-bold shadow-lg shadow-slate-300 dark:shadow-brand-900/30">1</div>
-                                        <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">Cover Page</h3>
+                {/* SIDEBAR (Desktop) */}
+                <div className="hidden md:flex flex-col w-64 border-r border-slate-200/60 dark:border-slate-800/60 p-6 bg-slate-50/50 dark:bg-slate-900/20">
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 mb-2 block">Tools</label>
+                        {[
+                            { id: 'MERGE', icon: Layers, label: 'Merge PDFs', desc: 'Combine multiple files' },
+                            { id: 'WATERMARK_ONLY', icon: Stamp, label: 'Batch Watermark', desc: 'Brand your docs' },
+                            { id: 'EDITOR', icon: Edit, label: 'Page Editor', desc: 'Rearrange & Rotate' },
+                        ].map((item) => (
+                            <button
+                                key={item.id}
+                                onClick={() => { setMode(item.id as AppMode); clearAll(); }}
+                                className={`w-full text-left p-3 rounded-xl transition-all duration-300 group ${mode === item.id ? 'bg-white dark:bg-slate-800 shadow-md shadow-slate-200/50 dark:shadow-black/20 text-brand-600 dark:text-brand-400 ring-1 ring-slate-200 dark:ring-slate-700' : 'hover:bg-slate-200/50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-400'}`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-lg ${mode === item.id ? 'bg-brand-50 dark:bg-brand-900/30' : 'bg-slate-100 dark:bg-slate-800'}`}>
+                                        <item.icon className="w-4 h-4" />
                                     </div>
-                                    {mode === 'WATERMARK_ONLY' && (
-                                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1 rounded-full uppercase tracking-wide">
-                                        Optional
-                                      </span>
-                                    )}
+                                    <div>
+                                        <div className="font-bold text-sm">{item.label}</div>
+                                        <div className="text-[10px] opacity-70 font-medium">{item.desc}</div>
+                                    </div>
                                 </div>
-                                <UploadZone
-                                    id="cover-upload"
-                                    label="Upload Cover PDF"
-                                    subLabel={mode === 'MERGE' ? "First page, no watermark applied" : "Prepended to every processed file"}
-                                    accept=".pdf"
-                                    multiple={false}
-                                    files={coverFile}
-                                    onFilesSelected={handleCoverSelect}
-                                    onRemoveFile={removeCover}
-                                    required={mode === 'MERGE'}
-                                />
-                            </div>
+                            </button>
+                        ))}
+                    </div>
 
-                            {/* Section 2: Content */}
-                            <div>
-                                <div className="flex items-center gap-3 mb-4">
-                                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-slate-900 dark:bg-brand-600 text-white text-sm font-bold shadow-lg shadow-slate-300 dark:shadow-brand-900/30">2</div>
-                                    <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">{mode === 'MERGE' ? 'Content Pages' : 'Batch Files'}</h3>
+                    <div className="mt-auto pt-8">
+                        <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-3 mb-3 block flex items-center gap-2"><Clock className="w-3 h-3" /> Recent</label>
+                        <div className="space-y-1">
+                            {recent.length === 0 && <div className="px-3 text-xs text-slate-400 italic">No recent activity</div>}
+                            {recent.map(r => (
+                                <div key={r.id} className="px-3 py-2 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800/50 cursor-default transition-colors">
+                                    <div className="text-xs font-bold text-slate-700 dark:text-slate-300 truncate">{r.name}</div>
+                                    <div className="text-[10px] text-slate-500 dark:text-slate-500 flex justify-between">
+                                        <span>{r.type}</span>
+                                        <span>{r.date}</span>
+                                    </div>
                                 </div>
-                                <UploadZone
-                                    id="content-upload"
-                                    label={mode === 'MERGE' ? "Upload Content PDFs" : "Upload PDFs to Process"}
-                                    subLabel={mode === 'MERGE' ? "Reorder files to set merge sequence" : "Watermark will be applied to all"}
-                                    accept=".pdf"
-                                    multiple={true}
-                                    files={contentFiles}
-                                    onFilesSelected={handleContentSelect}
-                                    onRemoveFile={removeContent}
-                                    onMoveUp={(idx) => moveFile(idx, 'up')}
-                                    onMoveDown={(idx) => moveFile(idx, 'down')}
-                                    required
-                                />
-                            </div>
+                            ))}
                         </div>
                     </div>
                 </div>
 
-                {/* Right Column: Settings */}
-                <div className="xl:col-span-5 space-y-6 lg:space-y-8 animate-slide-up xl:sticky xl:top-24" style={{ animationDelay: '100ms' }}>
-                    
-                    {/* Settings Panel */}
-                    <div className="glass-panel rounded-[2rem] border border-white/50 dark:border-slate-700/50 shadow-xl shadow-slate-200/50 dark:shadow-black/20 overflow-hidden flex flex-col">
+                {/* MAIN CONTENT AREA */}
+                <div className="flex-1 flex flex-col relative overflow-hidden">
+                    {/* Header for Mobile */}
+                    <div className="md:hidden p-4 border-b border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between bg-white/50 dark:bg-slate-900/50">
+                        <span className="font-bold text-lg font-display">{mode === 'MERGE' ? 'Merge PDFs' : mode === 'EDITOR' ? 'Page Editor' : 'Watermark'}</span>
+                        <button onClick={clearAll} className="p-2 text-slate-400 hover:text-red-500"><Trash2 className="w-5 h-5"/></button>
+                    </div>
+
+                    {/* Content Scroll Area */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 pb-32 md:pb-10">
                         
-                        {/* Tabs */}
-                        <div className="p-3">
-                           <div className="grid grid-cols-2 gap-1 bg-slate-100/80 dark:bg-slate-900/50 p-1.5 rounded-2xl">
-                              <button 
-                                  onClick={() => setActiveTab('watermark')}
-                                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'watermark' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                              >
-                                  <Settings2 className="w-3.5 h-3.5" /> Watermark
-                              </button>
-                              <button 
-                                  onClick={() => setActiveTab('metadata')}
-                                  className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === 'metadata' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                              >
-                                  <PenTool className="w-3.5 h-3.5" /> Metadata
-                              </button>
-                           </div>
-                        </div>
+                        {/* PROCESSING OVERLAY */}
+                        {processingState.status === MergeStatus.PROCESSING && (
+                             <div className="absolute inset-0 z-50 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 animate-fade-in">
+                                 <div className="relative w-24 h-24 mb-6">
+                                     <svg className="animate-spin w-full h-full text-slate-200 dark:text-slate-800" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                     <div className="absolute inset-0 flex items-center justify-center font-bold text-xs text-brand-600">{Math.round(processingState.progress)}%</div>
+                                 </div>
+                                 <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">{processingState.message}</h3>
+                                 <p className="text-slate-500 text-sm">Please wait while we crunch the bits...</p>
+                             </div>
+                        )}
 
-                        {/* Panel Content */}
-                        <div className="flex-grow p-6 md:p-8 max-h-[60vh] overflow-y-auto custom-scrollbar">
-                           
-                           {/* METADATA TAB */}
-                           {activeTab === 'metadata' && (
-                               <div className="space-y-6 animate-fade-in">
-                                   <div className="space-y-5">
-                                       <div className="space-y-2">
-                                           <label className="text-xs font-bold text-slate-600 dark:text-slate-400 flex items-center gap-2">
-                                               <Type className="w-3.5 h-3.5" /> Document Title
-                                           </label>
-                                           <input 
-                                                type="text" 
-                                                placeholder="e.g. Engineering Mathematics III" 
-                                                value={metadata.title}
-                                                onChange={(e) => setMetadata({...metadata, title: e.target.value})}
-                                                className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/50 dark:text-slate-200 placeholder-slate-400 transition-all"
-                                           />
-                                       </div>
-                                       <div className="space-y-2">
-                                           <label className="text-xs font-bold text-slate-600 dark:text-slate-400 flex items-center gap-2">
-                                               <PenTool className="w-3.5 h-3.5" /> Author Name
-                                           </label>
-                                           <input 
-                                                type="text" 
-                                                placeholder="e.g. VTU Notes Team" 
-                                                value={metadata.author}
-                                                onChange={(e) => setMetadata({...metadata, author: e.target.value})}
-                                                className="w-full bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/50 dark:text-slate-200 placeholder-slate-400 transition-all"
-                                           />
-                                       </div>
-                                   </div>
-                                   
-                                   <div className="bg-brand-50/80 dark:bg-brand-900/20 p-5 rounded-2xl border border-brand-100 dark:border-brand-900/30 flex gap-3">
-                                       <div className="shrink-0 pt-0.5 text-brand-500">
-                                          <Sparkles className="w-4 h-4" />
-                                       </div>
-                                       <p className="text-xs text-brand-700 dark:text-brand-300 leading-relaxed font-medium">
-                                           Pro Tip: Adding clear metadata improves how your PDFs appear in search results and document readers.
-                                       </p>
-                                   </div>
-                               </div>
-                           )}
+                        {/* SUCCESS STATE */}
+                        {processingState.status === MergeStatus.SUCCESS ? (
+                            <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto animate-scale-in">
+                                <div className="w-24 h-24 bg-emerald-500 text-white rounded-[2rem] flex items-center justify-center mb-6 shadow-2xl shadow-emerald-500/30 rotate-3">
+                                    <CheckCircle className="w-12 h-12" />
+                                </div>
+                                <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-3 font-display">Mission Accomplished!</h2>
+                                <p className="text-slate-600 dark:text-slate-400 mb-8 leading-relaxed">
+                                    Your files have been processed securely. No data was sent to any server.
+                                </p>
+                                
+                                {mergedPdfUrl && (
+                                    <a href={mergedPdfUrl} download="Processed_Document.pdf" className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-4 rounded-xl font-bold text-lg shadow-xl hover:-translate-y-1 transition-all flex items-center justify-center gap-3">
+                                        <FileDown className="w-6 h-6" /> Download PDF
+                                    </a>
+                                )}
 
-                           {/* WATERMARK TAB */}
-                           {activeTab === 'watermark' && (
-                             mode === 'WATERMARK_ONLY' ? (
-                                <div className="space-y-8 animate-fade-in">
-                                    {/* Live Preview */}
-                                    <div className="space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Live Preview</label>
-                                        </div>
-                                        <div className="aspect-[16/9] bg-slate-100 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 relative overflow-hidden group shadow-inner">
-                                            <div className="absolute inset-5 bg-white dark:bg-slate-900 shadow-sm border border-slate-100 dark:border-slate-800 rounded-lg"></div>
-                                            <div className="absolute inset-8 border border-dashed border-slate-200 dark:border-slate-700 opacity-60 rounded-md"></div>
-                                            
-                                            {/* Logo Layer */}
-                                            {logoPreviewUrl && (
-                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10" style={{ opacity: wmConfig.logoOpacity }}>
-                                                <img src={logoPreviewUrl} alt="" className="object-contain transition-all duration-300" style={{ width: `${wmConfig.logoScale * 80}%` }} />
-                                            </div>
-                                            )}
-                                            
-                                            {/* Text Layer */}
-                                            <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden" style={{ color: wmConfig.textColor }}>
-                                                {wmConfig.diagonal && <div className="absolute inset-0 flex items-center justify-center"><span className="text-2xl font-bold uppercase -rotate-[60deg] opacity-50" style={{ opacity: wmConfig.textOpacity }}>vtunotesforall</span></div>}
-                                                {wmConfig.crossed && <div className="absolute inset-0 flex items-center justify-center"><span className="text-2xl font-bold uppercase rotate-[60deg] opacity-50" style={{ opacity: wmConfig.textOpacity }}>vtunotesforall</span></div>}
-                                                {wmConfig.top && <div className="absolute top-8 w-full text-center"><span className="text-[10px] font-bold uppercase opacity-80" style={{ opacity: Math.min(wmConfig.textOpacity + 0.4, 1) }}>vtunotesforall</span></div>}
-                                                {wmConfig.bottom && <div className="absolute bottom-8 w-full text-center"><span className="text-[10px] font-bold uppercase opacity-80" style={{ opacity: Math.min(wmConfig.textOpacity + 0.4, 1) }}>vtunotesforall</span></div>}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Controls */}
-                                    <div className="space-y-6">
-                                        <div className="grid grid-cols-4 gap-2">
-                                            {[
-                                                { id: 'diagonal', icon: Stamp, label: 'Diag' },
-                                                { id: 'bottom', icon: ArrowDownToLine, label: 'Bot' },
-                                                { id: 'top', icon: ArrowUpToLine, label: 'Top' },
-                                                { id: 'crossed', icon: X, label: 'Cross' },
-                                            ].map((opt) => {
-                                                const isActive = wmConfig[opt.id as keyof WatermarkConfig];
-                                                const Icon = opt.icon;
-                                                return (
-                                                    <button
-                                                        key={opt.id}
-                                                        onClick={() => toggleWmOption(opt.id as any)}
-                                                        className={`flex flex-col items-center justify-center py-3 rounded-xl text-[10px] font-bold transition-all border ${isActive ? 'bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-800 text-brand-700 dark:text-brand-400 shadow-sm' : 'bg-slate-50 dark:bg-slate-800/50 border-transparent text-slate-500 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                                    >
-                                                        <Icon className="w-4 h-4 mb-1" />
-                                                        {opt.label}
-                                                    </button>
-                                                )
-                                            })}
-                                        </div>
-
-                                        {/* Color & Text Opacity */}
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col justify-between">
-                                                <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 block">Color</label>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 shadow-sm">
-                                                       <input type="color" value={wmConfig.textColor} onChange={e => setWmConfig(prev => ({...prev, textColor: e.target.value}))} className="absolute -top-2 -left-2 w-12 h-12 p-0 cursor-pointer border-none" />
-                                                    </div>
-                                                    <span className="text-xs font-mono text-slate-600 dark:text-slate-300">{wmConfig.textColor}</span>
+                                {processedFiles.length > 0 && (
+                                    <div className="w-full space-y-4 text-left">
+                                        {/* Batch Rename Control */}
+                                        <div className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row gap-4 items-center">
+                                            <div className="flex-1 w-full">
+                                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1 block">Batch Rename</label>
+                                                <div className="relative">
+                                                    <input 
+                                                        type="text" 
+                                                        value={filenameSuffix} 
+                                                        onChange={(e) => updateGlobalSuffix(e.target.value)}
+                                                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-brand-500 outline-none" 
+                                                        placeholder="Enter new suffix..."
+                                                    />
+                                                    <Pencil className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
                                                 </div>
                                             </div>
-                                            <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                                                <div className="flex justify-between items-center mb-2">
-                                                   <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Text Opacity</label>
-                                                   <span className="text-[10px] font-mono text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/30 px-1.5 py-0.5 rounded">{Math.round(wmConfig.textOpacity * 100)}%</span>
-                                                </div>
-                                                <input type="range" min="0.1" max="1" step="0.1" value={wmConfig.textOpacity} onChange={e => setWmConfig(prev => ({...prev, textOpacity: parseFloat(e.target.value)}))} className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg accent-brand-600 cursor-pointer" />
+                                            <div className="text-xs text-slate-500 dark:text-slate-400 sm:text-right">
+                                                Updates all files below. <br/> Example: <code>Note_<strong>{filenameSuffix || 'suffix'}</strong>.pdf</code>
                                             </div>
                                         </div>
 
-                                        <div className="border-t border-slate-200/50 dark:border-slate-700/50 pt-5">
-                                            <div className="flex justify-between items-center mb-4">
-                                                <label className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2"><ImageIcon className="w-3.5 h-3.5" /> Logo Overlay</label>
-                                                {!wmConfig.logoFile && (
-                                                     <button onClick={restoreDefaultLogo} className="text-[10px] font-bold text-brand-600 hover:text-brand-700 dark:text-brand-400 flex items-center gap-1">
-                                                        <RotateCcw className="w-3 h-3" /> Reset Default
-                                                     </button>
-                                                )}
-                                                {wmConfig.logoFile && <button onClick={removeLogo} className="text-[10px] text-red-500 hover:underline font-bold">REMOVE</button>}
-                                            </div>
-                                            {!wmConfig.logoFile ? (
-                                                <div onClick={() => logoInputRef.current?.click()} className="border border-dashed border-slate-300 dark:border-slate-600 hover:border-brand-400 dark:hover:border-brand-500 bg-slate-50 dark:bg-slate-900/30 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl p-6 text-center cursor-pointer transition-all group">
-                                                    <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoSelect} />
-                                                    <div className="flex flex-col items-center justify-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
-                                                        <div className="bg-white dark:bg-slate-800 p-2 rounded-lg shadow-sm group-hover:scale-110 transition-transform">
-                                                           <Plus className="w-4 h-4 text-brand-500" />
-                                                        </div>
-                                                        <span>Upload Custom Logo</span>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4 border border-slate-100 dark:border-slate-800 space-y-6">
-                                                    {/* File Info Card */}
-                                                    <div className="flex items-center gap-3 bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 shadow-sm">
-                                                        <div className="w-10 h-10 rounded-md bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-0.5 flex items-center justify-center overflow-hidden">
-                                                             <img src={logoPreviewUrl!} className="w-full h-full object-contain" />
-                                                        </div>
-                                                        <div className="min-w-0 flex-1">
-                                                            <div className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">{wmConfig.logoFile.name}</div>
-                                                            <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{(wmConfig.logoFile.size / 1024).toFixed(1)} KB</div>
-                                                        </div>
-                                                        <button onClick={removeLogo} className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-slate-400 hover:text-rose-500 rounded-lg transition-colors" title="Remove Logo">
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-2 max-h-[400px] overflow-y-auto border border-slate-200 dark:border-slate-700 custom-scrollbar">
+                                            {processedFiles.map(f => (
+                                                <div key={f.id} className="flex flex-col sm:flex-row items-center gap-3 p-3 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors group border border-transparent hover:border-slate-200 dark:hover:border-slate-700">
+                                                    <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 flex items-center justify-center shrink-0">
+                                                        <FileText className="w-5 h-5"/>
                                                     </div>
                                                     
-                                                    {/* Controls */}
-                                                    <div className="grid grid-cols-1 gap-5">
-                                                        <div className="space-y-3">
-                                                            <div className="flex justify-between items-center">
-                                                                <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                                                                   <Maximize className="w-3.5 h-3.5" /> Scale
-                                                                </label>
-                                                                <span className="text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-md">{Math.round(wmConfig.logoScale * 100)}%</span>
-                                                            </div>
-                                                            <input type="range" min="0.1" max="1" step="0.05" value={wmConfig.logoScale} onChange={e => setWmConfig(prev => ({...prev, logoScale: parseFloat(e.target.value)}))} className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" />
-                                                        </div>
-                                                        
-                                                        <div className="space-y-3">
-                                                             <div className="flex justify-between items-center">
-                                                                <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                                                                   <Sun className="w-3.5 h-3.5" /> Opacity
-                                                                </label>
-                                                                <span className="text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-md">{Math.round(wmConfig.logoOpacity * 100)}%</span>
-                                                            </div>
-                                                            <input type="range" min="0.1" max="1" step="0.05" value={wmConfig.logoOpacity} onChange={e => setWmConfig(prev => ({...prev, logoOpacity: parseFloat(e.target.value)}))} className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" />
-                                                        </div>
+                                                    <div className="flex-1 w-full min-w-0">
+                                                        <div className="text-[10px] text-slate-400 truncate mb-1">{f.originalName}</div>
+                                                        <input 
+                                                            type="text" 
+                                                            value={f.downloadFilename}
+                                                            onChange={(e) => updateResultFilename(f.id, e.target.value)}
+                                                            className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-brand-500 focus:bg-white dark:focus:bg-slate-900 outline-none text-sm font-bold text-slate-700 dark:text-slate-200 py-1 transition-all"
+                                                        />
                                                     </div>
-                                                </div>
-                                            )}
-                                        </div>
 
-                                        <div className="border-t border-slate-200/50 dark:border-slate-700/50 pt-5">
-                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2 block">Output Suffix</label>
-                                            <div className="flex items-center bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 focus-within:ring-2 focus-within:ring-brand-500/20 focus-within:border-brand-500 transition-all">
-                                                <span className="text-xs text-slate-400 mr-1 font-mono">_</span>
-                                                <input type="text" value={filenameSuffix} onChange={e => setFilenameSuffix(e.target.value)} className="bg-transparent border-none p-0 text-sm text-slate-700 dark:text-slate-200 w-full focus:ring-0 placeholder-slate-400 font-medium" placeholder="suffix" />
-                                            </div>
+                                                    <a href={f.downloadUrl} download={f.downloadFilename} className="w-full sm:w-auto p-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                                        <Download className="w-4 h-4" /> <span className="sm:hidden text-xs font-bold">Download</span>
+                                                    </a>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
+                                )}
+                                
+                                <button onClick={clearAll} className="mt-8 text-sm font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center gap-2">
+                                    <Undo2 className="w-4 h-4" /> Process More Files
+                                </button>
+                            </div>
+                        ) : mode === 'EDITOR' && editorPages.length > 0 ? (
+                            /* EDITOR UI */
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-xl font-bold dark:text-white font-display">Page Editor</h3>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setEditorPages(prev => prev.map(p => ({...p, rotation: (p.rotation+90)%360})))} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">Rotate All</button>
+                                        <button onClick={() => setEditorPages([])} className="px-3 py-1.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors">Clear</button>
+                                    </div>
                                 </div>
-                             ) : (
-                               /* Locked View for Merge */
-                               <div className="h-full flex flex-col items-center justify-center text-center p-4 animate-fade-in">
-                                   <div className="w-16 h-16 bg-brand-50 dark:bg-brand-900/10 rounded-full flex items-center justify-center text-brand-500 mb-4 ring-8 ring-brand-50/50 dark:ring-brand-900/10">
-                                       <LayoutTemplate className="w-8 h-8" />
-                                   </div>
-                                   <h4 className="font-bold text-lg text-slate-900 dark:text-white mb-2">Standard Merge Profile</h4>
-                                   <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs mb-8 leading-relaxed">
-                                       This mode uses a strict configuration to ensure consistency across all VTU notes.
-                                   </p>
-                                   
-                                   <div className="w-full max-w-xs space-y-3 text-left bg-slate-50 dark:bg-slate-900/50 p-5 rounded-2xl border border-slate-100 dark:border-slate-800">
-                                       <div className="flex items-start gap-3 text-xs text-slate-600 dark:text-slate-300">
-                                           <div className="w-1.5 h-1.5 rounded-full bg-brand-500 mt-1.5 shrink-0" />
-                                           <span>Separate Cover Page</span>
-                                       </div>
-                                       <div className="flex items-start gap-3 text-xs text-slate-600 dark:text-slate-300">
-                                           <div className="w-1.5 h-1.5 rounded-full bg-brand-500 mt-1.5 shrink-0" />
-                                           <span>Diagonal "vtunotesforall" Watermark</span>
-                                       </div>
-                                       <div className="flex items-start gap-3 text-xs text-slate-600 dark:text-slate-300">
-                                           <div className="w-1.5 h-1.5 rounded-full bg-brand-500 mt-1.5 shrink-0" />
-                                           <span>Automated Page Sequencing</span>
-                                       </div>
-                                   </div>
-                               </div>
-                             )
-                           )}
-                        </div>
-                    </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    {editorPages.map((page, idx) => (
+                                        <div key={page.id} className="group relative aspect-[1/1.4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm hover:shadow-xl transition-all border border-transparent hover:border-brand-500">
+                                            <img src={page.thumbnailUrl} className="w-full h-full object-contain bg-white" style={{ transform: `rotate(${page.rotation}deg)` }} />
+                                            <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur-md">{idx+1}</div>
+                                            <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 backdrop-blur-[1px]">
+                                                <button onClick={() => setEditorPages(prev => prev.map(p => p.id === page.id ? {...p, rotation: (p.rotation+90)%360} : p))} className="p-2 bg-white/20 hover:bg-white rounded-full hover:text-brand-600 text-white transition-all"><RotateCw className="w-5 h-5"/></button>
+                                                <button onClick={() => setEditorPages(prev => prev.filter(p => p.id !== page.id))} className="p-2 bg-rose-500/80 hover:bg-rose-500 rounded-full text-white transition-all"><Trash2 className="w-5 h-5"/></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div className="aspect-[1/1.4] rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-brand-400 dark:hover:border-brand-500 flex flex-col items-center justify-center text-slate-400 hover:text-brand-500 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-all relative">
+                                        <input type="file" multiple accept=".pdf" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => e.target.files && handleEditorFilesSelect(Array.from(e.target.files))} />
+                                        <Plus className="w-8 h-8 mb-2" />
+                                        <span className="text-xs font-bold">Add Pages</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            /* UPLOAD & CONFIG UI */
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 animate-fade-in">
+                                <div className="space-y-8">
+                                    {mode === 'EDITOR' ? (
+                                        <div className="text-center py-12">
+                                            <div className="w-20 h-20 bg-brand-50 dark:bg-brand-900/20 text-brand-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                <Edit className="w-10 h-10" />
+                                            </div>
+                                            <h3 className="text-xl font-bold dark:text-white">Start Editing</h3>
+                                            <p className="text-slate-500 mb-6 text-sm">Upload a PDF to reorder, rotate or remove pages.</p>
+                                            <UploadZone id="editor" label="Upload PDF" subLabel="Visual Page Editor" accept=".pdf" files={editorSourceFiles} onFilesSelected={handleEditorFilesSelect} onRemoveFile={() => {}} />
+                                        </div>
+                                    ) : (
+                                        <>
+                                           <div className="space-y-4">
+                                               <div className="flex justify-between items-center">
+                                                   <h3 className="text-lg font-bold dark:text-white font-display">1. Upload Files</h3>
+                                                   {mode !== 'MERGE' && <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">BATCH MODE</span>}
+                                               </div>
+                                               
+                                               <div className="space-y-4">
+                                                   <UploadZone 
+                                                        id="cover" 
+                                                        label="Cover Page" 
+                                                        subLabel={mode === 'MERGE' ? "First page of document" : "Prepended to all files (Optional)"} 
+                                                        accept=".pdf" 
+                                                        files={coverFile} 
+                                                        onFilesSelected={handleCoverSelect} 
+                                                        onRemoveFile={() => {setCoverFile([]); setMergedPdfUrl(null);}} 
+                                                        required={mode === 'MERGE'}
+                                                    />
+                                                   <UploadZone 
+                                                        id="content" 
+                                                        label="Content Files" 
+                                                        subLabel="Main documents to process" 
+                                                        accept=".pdf" 
+                                                        multiple 
+                                                        files={contentFiles} 
+                                                        onFilesSelected={handleContentSelect} 
+                                                        onRemoveFile={(id) => setContentFiles(prev => prev.filter(f => f.id !== id))} 
+                                                        required 
+                                                    />
+                                               </div>
+                                           </div>
+                                           
+                                           <div className="space-y-4">
+                                                <h3 className="text-lg font-bold dark:text-white font-display">2. Metadata</h3>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <input type="text" placeholder="Title" value={metadata.title} onChange={e => setMetadata({...metadata, title: e.target.value})} className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-brand-500 outline-none transition-all dark:text-white" />
+                                                    <input type="text" placeholder="Author" value={metadata.author} onChange={e => setMetadata({...metadata, author: e.target.value})} className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-brand-500 outline-none transition-all dark:text-white" />
+                                                </div>
+                                           </div>
+                                        </>
+                                    )}
+                                </div>
 
-                    {/* ACTION BUTTON */}
-                    <div className="pt-2">
-                        <button
-                          onClick={handleProcess}
-                          disabled={!isReady}
-                          className={`
-                            w-full group relative overflow-hidden
-                            flex items-center justify-center gap-3 py-5 rounded-2xl font-bold text-lg tracking-tight transition-all duration-300
-                            ${isReady 
-                              ? 'bg-slate-900 dark:bg-brand-600 text-white shadow-xl shadow-slate-900/20 dark:shadow-brand-600/20 hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99]' 
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                            }
-                          `}
-                        >
-                             {processingState.status === MergeStatus.PROCESSING ? (
-                                <>
-                                  <RefreshCw className="w-5 h-5 animate-spin" />
-                                  <span>Processing Files...</span>
-                                </>
-                             ) : (
-                                <>
-                                  <span>{mode === 'MERGE' ? 'Merge Documents' : 'Start Batch Process'}</span>
-                                  <ArrowRightCircle className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
-                                </>
-                             )}
-                        </button>
-                    </div>
+                                {/* RIGHT PANEL: PREVIEW & SETTINGS */}
+                                {mode !== 'EDITOR' && (
+                                    <div className="space-y-6 lg:sticky lg:top-6">
+                                        <div className="bg-slate-100 dark:bg-slate-800/50 rounded-[2rem] p-6 relative group overflow-hidden border border-slate-200/50 dark:border-slate-700/50">
+                                            <div className="absolute top-4 right-4 z-20 flex gap-2">
+                                                <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold shadow-sm">LIVE PREVIEW</div>
+                                            </div>
+                                            
+                                            {/* Paper Representation */}
+                                            <div className="aspect-[1/1.414] bg-white relative shadow-2xl shadow-slate-900/10 mx-auto w-3/4 transition-transform duration-500 group-hover:scale-[1.02] origin-bottom">
+                                                {/* Simulated Content */}
+                                                <div className="absolute inset-8 space-y-4 opacity-10 pointer-events-none">
+                                                    <div className="h-6 bg-slate-900 w-3/4 mb-8"></div>
+                                                    {[...Array(6)].map((_, i) => <div key={i} className="h-2.5 bg-slate-900 w-full"></div>)}
+                                                </div>
+                                                
+                                                {/* Watermark Overlay */}
+                                                <div className="absolute inset-0 overflow-hidden flex items-center justify-center pointer-events-none" style={{ color: wmConfig.textColor }}>
+                                                     {mode === 'WATERMARK_ONLY' ? (
+                                                        <>
+                                                            {logoPreviewUrl && <img src={logoPreviewUrl} className="absolute object-contain transition-opacity duration-300" style={{ width: `${wmConfig.logoScale * 80}%`, opacity: wmConfig.logoOpacity }} />}
+                                                            {wmConfig.diagonal && <div className="absolute inset-0 flex items-center justify-center"><span className="text-3xl font-bold uppercase transition-opacity" style={{ opacity: wmConfig.textOpacity, transform: `rotate(-${rotationAngle}deg)` }}>vtunotesforall</span></div>}
+                                                            {wmConfig.crossed && <div className="absolute inset-0 flex items-center justify-center"><span className="text-3xl font-bold uppercase transition-opacity" style={{ opacity: wmConfig.textOpacity, transform: `rotate(${rotationAngle}deg)` }}>vtunotesforall</span></div>}
+                                                            {wmConfig.bottom && <div className="absolute bottom-8 w-full text-center"><span className="text-xs font-bold uppercase" style={{ opacity: Math.min(wmConfig.textOpacity + 0.4, 1) }}>vtunotesforall</span></div>}
+                                                        </>
+                                                     ) : (
+                                                         <div className="absolute inset-0 flex items-center justify-center opacity-30">
+                                                             <span className="text-2xl font-bold -rotate-45">Standard Watermark</span>
+                                                         </div>
+                                                     )}
+                                                </div>
+                                            </div>
+                                        </div>
 
+                                        {/* Watermark Controls */}
+                                        {mode === 'WATERMARK_ONLY' && (
+                                            <div className="space-y-4">
+                                                <div className="grid grid-cols-4 gap-2">
+                                                    {[
+                                                        { id: 'diagonal', icon: Stamp, label: 'Diag' },
+                                                        { id: 'bottom', icon: ArrowDownToLine, label: 'Footer' },
+                                                        { id: 'top', icon: ArrowUpToLine, label: 'Header' },
+                                                        { id: 'crossed', icon: X, label: 'Cross' },
+                                                    ].map((opt) => (
+                                                        <button
+                                                            key={opt.id}
+                                                            onClick={() => setWmConfig(prev => ({ ...prev, [opt.id]: !prev[opt.id as keyof WatermarkConfig] }))}
+                                                            className={`flex flex-col items-center justify-center py-3 rounded-xl text-[10px] font-bold transition-all border ${wmConfig[opt.id as keyof WatermarkConfig] ? 'bg-brand-500 text-white border-brand-500 shadow-lg shadow-brand-500/20' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-slate-50'}`}
+                                                        >
+                                                            <opt.icon className="w-4 h-4 mb-1" /> {opt.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                
+                                                <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-5">
+                                                    {/* Rotation Slider (Optional Feature) */}
+                                                    {(wmConfig.diagonal || wmConfig.crossed) && (
+                                                        <div className="space-y-2">
+                                                            <div className="flex justify-between text-[10px] font-bold uppercase text-slate-500 tracking-wider">
+                                                                <span>Rotation</span>
+                                                                <span>{rotationAngle}°</span>
+                                                            </div>
+                                                            <input 
+                                                                type="range" min="0" max="90" step="1" 
+                                                                value={rotationAngle} 
+                                                                onChange={e => setRotationAngle(parseInt(e.target.value))} 
+                                                                className="w-full accent-brand-500 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" 
+                                                            />
+                                                        </div>
+                                                    )}
+
+                                                    {/* Text Watermark Controls */}
+                                                    <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-700">
+                                                       <div className="flex items-center justify-between">
+                                                           <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Text Opacity</label>
+                                                           <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded">{Math.round(wmConfig.textOpacity * 100)}%</span>
+                                                       </div>
+                                                       <div className="flex items-center gap-3">
+                                                            <div className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden cursor-pointer relative shrink-0">
+                                                                <input type="color" value={wmConfig.textColor} onChange={e => setWmConfig({...wmConfig, textColor: e.target.value})} className="absolute inset-0 opacity-0 cursor-pointer" />
+                                                                <div className="w-5 h-5 rounded-full shadow-sm border border-black/10" style={{ backgroundColor: wmConfig.textColor }}></div>
+                                                            </div>
+                                                            <input 
+                                                                type="range" min="0.1" max="1" step="0.05" 
+                                                                value={wmConfig.textOpacity} 
+                                                                onChange={e => setWmConfig({...wmConfig, textOpacity: parseFloat(e.target.value)})} 
+                                                                className="w-full accent-brand-500 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" 
+                                                            />
+                                                       </div>
+                                                    </div>
+
+                                                    {/* Logo Watermark Controls */}
+                                                    <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-700">
+                                                        <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider mb-2 block">Logo Watermark</label>
+                                                        
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => logoInputRef.current?.click()} className="flex-1 py-2 bg-slate-100 dark:bg-slate-900 rounded-lg text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-2">
+                                                                {wmConfig.logoFile ? <><ImageIcon className="w-3 h-3"/> Change Logo</> : <><Plus className="w-3 h-3"/> Upload Logo</>}
+                                                            </button>
+                                                            <input ref={logoInputRef} type="file" className="hidden" accept="image/*" onChange={e => e.target.files?.[0] && setWmConfig(prev => ({...prev, logoFile: e.target.files![0]}))} />
+                                                            
+                                                            {wmConfig.logoFile && (
+                                                                <button onClick={() => setWmConfig(prev => ({...prev, logoFile: null}))} className="p-2 bg-rose-50 dark:bg-rose-900/20 text-rose-500 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors">
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+
+                                                        {wmConfig.logoFile && (
+                                                            <div className="space-y-4 mt-3 animate-fade-in">
+                                                                {/* Logo Opacity */}
+                                                                <div className="space-y-1">
+                                                                    <div className="flex justify-between text-[10px] font-medium text-slate-400">
+                                                                        <span>Opacity</span>
+                                                                        <span>{Math.round(wmConfig.logoOpacity * 100)}%</span>
+                                                                    </div>
+                                                                    <input 
+                                                                        type="range" min="0.1" max="1" step="0.05" 
+                                                                        value={wmConfig.logoOpacity} 
+                                                                        onChange={e => setWmConfig({...wmConfig, logoOpacity: parseFloat(e.target.value)})} 
+                                                                        className="w-full accent-brand-500 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" 
+                                                                    />
+                                                                </div>
+                                                                
+                                                                {/* Logo Scale */}
+                                                                <div className="space-y-1">
+                                                                    <div className="flex justify-between text-[10px] font-medium text-slate-400">
+                                                                        <span>Size</span>
+                                                                        <span>{Math.round(wmConfig.logoScale * 100)}%</span>
+                                                                    </div>
+                                                                    <input 
+                                                                        type="range" min="0.1" max="1" step="0.05" 
+                                                                        value={wmConfig.logoScale} 
+                                                                        onChange={e => setWmConfig({...wmConfig, logoScale: parseFloat(e.target.value)})} 
+                                                                        className="w-full accent-brand-500 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer" 
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Filename Output Settings for Batch Mode */}
+                                                    <div className="pt-2 border-t border-slate-100 dark:border-slate-700">
+                                                         <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 mb-2 block flex items-center gap-1">Output Suffix <Info className="w-3 h-3 text-slate-400" /></label>
+                                                         <input 
+                                                            type="text" 
+                                                            value={filenameSuffix}
+                                                            onChange={(e) => setFilenameSuffix(e.target.value)}
+                                                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-brand-500 outline-none"
+                                                            placeholder="e.g. vtunotesforall"
+                                                         />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Desktop Process Action */}
+                                        <div className="hidden lg:block pt-4">
+                                            <button
+                                                onClick={handleProcess}
+                                                disabled={!isReady}
+                                                className={`w-full py-4 rounded-2xl font-bold text-lg shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all flex items-center justify-center gap-3 ${isReady ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-slate-900/20 dark:shadow-white/10' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}`}
+                                            >
+                                                {mode === 'EDITOR' ? 'Compile PDF' : 'Start Processing'} <ArrowRightCircle className="w-5 h-5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
-              </div>
-            )}
-          </div>
+            </div>
+        </div>
+
       </main>
+
+      {/* MOBILE BOTTOM DOCK NAVIGATION */}
+      <div className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-[90%] max-w-sm">
+          {isReady && processingState.status === MergeStatus.IDLE ? (
+               <button
+                  onClick={handleProcess}
+                  className="w-full py-4 rounded-2xl bg-brand-600 text-white font-bold text-lg shadow-2xl shadow-brand-500/40 flex items-center justify-center gap-2 animate-slide-up"
+              >
+                  {mode === 'EDITOR' ? 'Compile PDF' : 'Process Files'} <ArrowRightCircle className="w-5 h-5" />
+              </button>
+          ) : (
+              <div className="glass-nav rounded-2xl p-1.5 flex justify-between shadow-2xl shadow-black/20 border border-white/20 dark:border-slate-700/50">
+                  {[
+                    { id: 'MERGE', icon: Layers, label: 'Merge' },
+                    { id: 'WATERMARK_ONLY', icon: Stamp, label: 'Batch' },
+                    { id: 'EDITOR', icon: Edit, label: 'Editor' },
+                  ].map((item) => (
+                      <button
+                          key={item.id}
+                          onClick={() => { setMode(item.id as AppMode); clearAll(); }}
+                          className={`flex-1 flex flex-col items-center justify-center py-2 rounded-xl transition-all ${mode === item.id ? 'bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-sm' : 'text-slate-400'}`}
+                      >
+                          <item.icon className={`w-5 h-5 ${mode === item.id ? 'mb-0.5' : ''}`} />
+                          {mode === item.id && <span className="text-[10px] font-bold">{item.label}</span>}
+                      </button>
+                  ))}
+              </div>
+          )}
+      </div>
+
     </div>
   );
 };
-
-// Helper Icon for generic use
-const UploadZoneIcon = ({className}:{className?: string}) => (
-    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="17 8 12 3 7 8" />
-        <line x1="12" y1="3" x2="12" y2="15" />
-    </svg>
-);
 
 export default App;

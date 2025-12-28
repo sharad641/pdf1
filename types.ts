@@ -1,3 +1,4 @@
+
 export interface FileWithId {
   id: string;
   file: File;
@@ -24,7 +25,7 @@ export interface ProcessingState {
   progress: number; // 0 to 100
 }
 
-export type AppMode = 'MERGE' | 'WATERMARK_ONLY';
+export type AppMode = 'MERGE' | 'WATERMARK_ONLY' | 'EDITOR';
 
 export interface PdfMetadata {
   title: string;
@@ -47,4 +48,12 @@ export interface WatermarkConfig {
   logoFile: File | null;
   logoOpacity: number; // 0 to 1
   logoScale: number; // 0.1 to 1.0 (relative to page width)
+}
+
+export interface EditorPage {
+  id: string;
+  fileId: string; // Reference to the uploaded file in memory
+  originalPageIndex: number; // 0-based index in the original file
+  rotation: number; // 0, 90, 180, 270
+  thumbnailUrl: string;
 }

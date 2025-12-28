@@ -1,5 +1,9 @@
 import { PDFDocument, rgb, degrees, StandardFonts, PDFPage, PDFFont, PDFImage } from 'pdf-lib';
-import { WatermarkConfig, PdfMetadata } from '../types';
+import * as pdfjsLib from 'pdfjs-dist';
+import { WatermarkConfig, PdfMetadata, EditorPage, FileWithId } from '../types';
+
+// Initialize PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs`;
 
 const DEFAULT_WATERMARK_TEXT = 'vtunotesforall';
 const STRICT_WATERMARK_COLOR = rgb(0.5, 0.5, 0.5); 
@@ -257,4 +261,80 @@ export const mergeProcessedFiles = async (processedFiles: Uint8Array[]): Promise
   }
   
   return await mergedPdf.save();
+};
+
+
+// --- EDITOR SERVICES ---
+
+/**
+ * Generates thumbnails for all pages in a PDF file
+ */
+export const generatePdfThumbnails = async (
+  fileItem: FileWithId, 
+  onProgress?: (curr: number, total: number) => void
+): Promise<EditorPage[]> => {
+  const fileArrayBuffer = await fileItem.file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument(fileArrayBuffer).promise;
+  const totalPages = pdf.numPages;
+  const pages: EditorPage[] = [];
+
+  for (let i = 1; i <= totalPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 0.3 }); // Low scale for thumbnail speed
+    
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    if (context) {
+      await page.render({ canvasContext: context, viewport: viewport }).promise;
+      pages.push({
+        id: Math.random().toString(36).substring(2, 9),
+        fileId: fileItem.id,
+        originalPageIndex: i - 1, // PDFLib is 0-based
+        rotation: 0,
+        thumbnailUrl: canvas.toDataURL()
+      });
+    }
+    
+    if (onProgress) onProgress(i, totalPages);
+  }
+
+  return pages;
+};
+
+/**
+ * Builds the final PDF from the Editor Page List
+ */
+export const buildPdfFromEditor = async (
+  editorPages: EditorPage[], 
+  sourceFiles: FileWithId[]
+): Promise<Uint8Array> => {
+  const newPdf = await PDFDocument.create();
+  
+  // Cache loaded PDFDocuments to avoid re-parsing the same file multiple times
+  const loadedDocs: Record<string, PDFDocument> = {};
+
+  for (const page of editorPages) {
+    let srcDoc = loadedDocs[page.fileId];
+    
+    if (!srcDoc) {
+      const sourceFile = sourceFiles.find(f => f.id === page.fileId);
+      if (!sourceFile) continue; // Should not happen
+      const bytes = await sourceFile.file.arrayBuffer();
+      srcDoc = await PDFDocument.load(bytes);
+      loadedDocs[page.fileId] = srcDoc;
+    }
+
+    const [copiedPage] = await newPdf.copyPages(srcDoc, [page.originalPageIndex]);
+    
+    // Apply Rotation
+    const currentRotation = copiedPage.getRotation().angle;
+    copiedPage.setRotation(degrees(currentRotation + page.rotation));
+    
+    newPdf.addPage(copiedPage);
+  }
+
+  return await newPdf.save();
 };
