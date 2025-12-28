@@ -135,7 +135,7 @@ const applyWatermarkToPage = (
  * Merges PDFs (Strict Mode)
  */
 export const mergeAndWatermarkPdfs = async (
-  coverFile: File,
+  coverFile: File | undefined,
   contentFiles: File[],
   onProgress: (progress: number) => void,
   metadata?: PdfMetadata
@@ -153,11 +153,13 @@ export const mergeAndWatermarkPdfs = async (
     const helveticaFont = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
     
     // Step 1: Cover Page
-    onProgress(5);
-    const coverBytes = await coverFile.arrayBuffer();
-    const coverDoc = await PDFDocument.load(coverBytes);
-    const copiedCoverPages = await mergedPdf.copyPages(coverDoc, coverDoc.getPageIndices());
-    copiedCoverPages.forEach((page) => mergedPdf.addPage(page));
+    if (coverFile) {
+      onProgress(5);
+      const coverBytes = await coverFile.arrayBuffer();
+      const coverDoc = await PDFDocument.load(coverBytes);
+      const copiedCoverPages = await mergedPdf.copyPages(coverDoc, coverDoc.getPageIndices());
+      copiedCoverPages.forEach((page) => mergedPdf.addPage(page));
+    }
     
     onProgress(15);
 

@@ -2,8 +2,8 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata, EditorPage } from './types';
-import { mergeAndWatermarkPdfs, processBatchFile, generatePdfThumbnails, buildPdfFromEditor } from './services/pdfService';
-import { FileDown, CheckCircle, Layers, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Sparkles, FileText, Undo2, Trash2, ArrowRightCircle, Plus, RotateCw, Edit, Clock, Info, Pencil } from 'lucide-react';
+import { mergeAndWatermarkPdfs, processBatchFile, generatePdfThumbnails, buildPdfFromEditor, mergeProcessedFiles } from './services/pdfService';
+import { FileDown, CheckCircle, Layers, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Sparkles, FileText, Undo2, Trash2, ArrowRightCircle, Plus, RotateCw, Edit, Clock, Info, Pencil, Package } from 'lucide-react';
 
 // --- DEFAULT LOGO GENERATION ---
 const DEFAULT_LOGO_SVG = `
@@ -147,7 +147,8 @@ const App: React.FC = () => {
   // Derived State
   const logoPreviewUrl = useMemo(() => wmConfig.logoFile ? URL.createObjectURL(wmConfig.logoFile) : null, [wmConfig.logoFile]);
   const generateId = () => Math.random().toString(36).substring(2, 9);
-  const isReady = mode === 'MERGE' ? (coverFile.length > 0 && contentFiles.length > 0) : mode === 'EDITOR' ? editorPages.length > 0 : (contentFiles.length > 0);
+  // NOTE: Modified isReady check to make cover file optional in MERGE mode
+  const isReady = mode === 'EDITOR' ? editorPages.length > 0 : contentFiles.length > 0;
 
   // --- HANDLERS ---
   const handleCoverSelect = useCallback((files: File[]) => { if (files.length > 0) setCoverFile([{ id: generateId(), file: files[0] }]); }, []);
@@ -180,7 +181,12 @@ const App: React.FC = () => {
     try {
       await new Promise(r => setTimeout(r, 800)); // Cinematic delay
       if (mode === 'MERGE') {
-        const bytes = await mergeAndWatermarkPdfs(coverFile[0].file, contentFiles.map(f => f.file), (p) => setProcessingState(prev => ({...prev, progress: p, message: 'Processing pages...'})), metadata);
+        const bytes = await mergeAndWatermarkPdfs(
+            coverFile[0]?.file, 
+            contentFiles.map(f => f.file), 
+            (p) => setProcessingState(prev => ({...prev, progress: p, message: 'Processing pages...'})), 
+            metadata
+        );
         setMergedPdfUrl(URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' })));
         addActivity(metadata.title || 'Merged Document', 'Merge');
       } else {
@@ -212,6 +218,34 @@ const App: React.FC = () => {
      } catch(e) { 
          setProcessingState({ status: MergeStatus.ERROR, progress: 0 }); 
          setToast({ msg: "Compilation failed", type: 'error' });
+     }
+  };
+
+  const handleBatchMergeDownload = async () => {
+     setProcessingState({ status: MergeStatus.PROCESSING, progress: 40, message: "Merging all files..." });
+     try {
+        await new Promise(r => setTimeout(r, 500)); // UI delay
+        const arrays = processedFiles.map(f => f.processedData);
+        const mergedBytes = await mergeProcessedFiles(arrays);
+        
+        const blob = new Blob([mergedBytes as unknown as BlobPart], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `Batch_Merged_${filenameSuffix || 'output'}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        setProcessingState({ status: MergeStatus.SUCCESS, progress: 100, message: "Complete" });
+        setToast({ msg: "Merged batch downloaded!", type: 'success' });
+     } catch (e) {
+        console.error(e);
+        // Return to success state so list is visible
+        setProcessingState({ status: MergeStatus.SUCCESS, progress: 100, message: "Complete" });
+        setToast({ msg: "Failed to merge batch", type: 'error' });
      }
   };
 
@@ -382,6 +416,14 @@ const App: React.FC = () => {
                                             </div>
                                         </div>
 
+                                        {/* Download Merged Option - NEW */}
+                                        <button 
+                                            onClick={handleBatchMergeDownload}
+                                            className="w-full py-3 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-bold shadow-lg shadow-brand-500/20 flex items-center justify-center gap-2 transition-all hover:scale-[1.01]"
+                                        >
+                                            <Package className="w-5 h-5" /> Download All as Merged PDF
+                                        </button>
+
                                         <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-2 max-h-[400px] overflow-y-auto border border-slate-200 dark:border-slate-700 custom-scrollbar">
                                             {processedFiles.map(f => (
                                                 <div key={f.id} className="flex flex-col sm:flex-row items-center gap-3 p-3 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors group border border-transparent hover:border-slate-200 dark:hover:border-slate-700">
@@ -465,12 +507,12 @@ const App: React.FC = () => {
                                                    <UploadZone 
                                                         id="cover" 
                                                         label="Cover Page" 
-                                                        subLabel={mode === 'MERGE' ? "First page of document" : "Prepended to all files (Optional)"} 
+                                                        subLabel="First page of document (Optional)"
                                                         accept=".pdf" 
                                                         files={coverFile} 
                                                         onFilesSelected={handleCoverSelect} 
                                                         onRemoveFile={() => {setCoverFile([]); setMergedPdfUrl(null);}} 
-                                                        required={mode === 'MERGE'}
+                                                        required={false}
                                                     />
                                                    <UploadZone 
                                                         id="content" 
