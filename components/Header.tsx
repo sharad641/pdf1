@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Moon, Sun, ShieldCheck, Zap, Menu, X, Github, Share2 } from 'lucide-react';
+import { BookOpen, Moon, Sun, ShieldCheck, Zap, Share2 } from 'lucide-react';
 
 interface HeaderProps {
   darkMode: boolean;

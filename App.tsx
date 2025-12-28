@@ -3,7 +3,7 @@ import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import { FileWithId, MergeStatus, ProcessingState, AppMode, ProcessedFile, WatermarkConfig, PdfMetadata, EditorPage } from './types';
 import { mergeAndWatermarkPdfs, processBatchFile, mergeProcessedFiles, generatePdfThumbnails, buildPdfFromEditor } from './services/pdfService';
-import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun, RotateCcw, ChevronRight, GripHorizontal, RotateCw, Edit, Clock, XCircle, Share2, Info, Pencil, Save, Sliders } from 'lucide-react';
+import { FileDown, RefreshCw, CheckCircle, AlertTriangle, Layers, FileCheck, Download, Stamp, ArrowDownToLine, ArrowUpToLine, X, Image as ImageIcon, Settings2, Sparkles, FileText, Undo2, LayoutTemplate, PenTool, Type, Trash2, ArrowRightCircle, Plus, Maximize, Sun, RotateCcw, ChevronRight, GripHorizontal, RotateCw, Edit, Clock, XCircle, Share2, Info, Pencil, Save } from 'lucide-react';
 
 // --- DEFAULT LOGO GENERATION ---
 const DEFAULT_LOGO_SVG = `
@@ -660,7 +660,7 @@ const App: React.FC = () => {
                                                 disabled={!isReady}
                                                 className={`w-full py-4 rounded-2xl font-bold text-lg shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all flex items-center justify-center gap-3 ${isReady ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-slate-900/20 dark:shadow-white/10' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}`}
                                             >
-                                                {mode === 'EDITOR' ? 'Compile PDF' : 'Start Processing'} <ArrowRightCircle className="w-5 h-5" />
+                                                Start Processing <ArrowRightCircle className="w-5 h-5" />
                                             </button>
                                         </div>
                                     </div>

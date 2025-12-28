@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, Trash2, FileText, Upload, ChevronUp, ChevronDown, GripVertical, FileType, Check } from 'lucide-react';
+import { UploadCloud, Trash2, Upload, ChevronUp, ChevronDown, GripVertical, FileType, Check } from 'lucide-react';
 import { FileWithId } from '../types';
 
 interface UploadZoneProps {
